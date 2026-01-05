@@ -39,7 +39,7 @@ uint32_t globalFilenameChecksum = 0;
 
 // MSC State
 volatile bool g_mscActive = false;
-Adafruit_USBD_MSC usb_msc;
+Adafruit_USBD_MSC* usb_msc = nullptr; // Initialize to null pointer to prevent hangup on start
 
 
 // ===================================

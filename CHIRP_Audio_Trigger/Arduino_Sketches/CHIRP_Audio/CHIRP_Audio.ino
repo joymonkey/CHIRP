@@ -79,6 +79,8 @@
 //#include <Adafruit_NeoPixel.h>
 
 volatile bool g_allowAudio = false; // Start muted (for startup sync)
+bool useFlashForBank1 = false; // Default to SD unless enabled in INI
+
 
 // ===================================
 // NEW FUNCTION: Calculate Checksum
@@ -113,8 +115,10 @@ void setup() {
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
 
-    // 2. Stabilization Delay (Critical for USB/Power)
-    //delay(2000);
+    // 2. Stabilization Delay (Critical for USB/Power and Serial Capture)
+    #ifdef DEBUG
+    delay(3000);
+    #endif
 
     // 3. Status LEDs
     initBlinkies();
@@ -153,7 +157,7 @@ void setup() {
 
     // Initialize Audio System (Streams, Buffers, Flags)
     initAudioSystem();
-    Serial.println("Audio System Initialized (3 Streams, 2 MP3 Decoders)");
+    Serial.println("Audio System Initialized (MAX_STREAMS Streams, MAX_MP3_DECODERS MP3 Decoders)");
     
     // Initialize Serial2 Message Queue
     initSerial2Queue();
@@ -216,6 +220,8 @@ void setup() {
     // Parse INI file *before* scanning banks
     Serial.println("\n=== Reading CHIRP.INI ===");
     bool fwUpdated = parseIniFile();
+    Serial.printf("INI Parse Result: fwUpdated=%s, activePage=%c, useFlash=%d\n", 
+                  fwUpdated ? "TRUE" : "FALSE", activeBank1Page, useFlashForBank1);
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
 
     // NEW: Scan for Valid Bank 1 Pages (for button logic)
@@ -227,9 +233,12 @@ void setup() {
     scanBank1();
     Serial.printf("Found %d sounds in Bank 1\n", bank1SoundCount);
     
+    // NEW: Play Firmware Update Feedback (regardless of sync setting)
+    playFirmwareUpdateFeedback(fwUpdated);
+
     // Sync Bank 1 to Flash
     Serial.println("\n=== Syncing Bank 1 to Flash ===");
-    if (!syncBank1ToFlash(fwUpdated)) {
+    if (!syncBank1ToFlash()) {
         Serial.println("WARNING: Bank 1 sync incomplete");
     }
     

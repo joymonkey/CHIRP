@@ -13,7 +13,7 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20260104"
+#define VERSION_STRING "20260105"
 //#define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
@@ -128,6 +128,8 @@ extern char validBank1Pages[27];
 extern int validBank1PageCount;
 extern SDBank sdBanks[MAX_SD_BANKS];
 extern int sdBankCount;
+extern bool useFlashForBank1;
+
 
 // Root Tracks (Legacy Compatibility)
 #define MAX_ROOT_TRACKS 255
@@ -159,14 +161,14 @@ extern volatile bool g_allowAudio;
 
 // MSC State
 extern volatile bool g_mscActive;
-extern Adafruit_USBD_MSC usb_msc;
+extern Adafruit_USBD_MSC* usb_msc;
 
 // ===================================
 // NEW: Flexible Audio Architecture
 // ===================================
 
 #define MAX_STREAMS 3
-#define MAX_MP3_DECODERS 2
+#define MAX_MP3_DECODERS 3
 #define STREAM_BUFFER_SIZE (256 * 1024) // 256K samples = 512KB per stream (PSRAM)
 
 enum StreamType {
@@ -268,7 +270,9 @@ bool parseIniFile();
 void writeIniFile();
 void scanValidBank1Pages();
 void scanBank1();
-bool syncBank1ToFlash(bool fwUpdated);
+bool syncBank1ToFlash(); // Removed bool arg
+void playFirmwareUpdateFeedback(bool fwUpdated); // NEW
+
 void scanSDBanks();
 void scanRootTracks();
 SDBank* findSDBank(uint8_t bank, char page);

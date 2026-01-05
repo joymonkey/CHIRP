@@ -70,6 +70,15 @@ bool parseIniFile() {
                         }
                     }
                 }
+                // Check USE_FLASH_BANK1
+                else if (strncasecmp(command, "USE_FLASH_BANK1", 15) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' '); // Find first char of value
+                        int val = atoi(value);
+                        useFlashForBank1 = (val == 1);
+                    }
+                }
             }
         }
         iniFile.close();
@@ -123,6 +132,7 @@ void writeIniFile() {
         iniFile.println("# CHIRP Configuration File");
         iniFile.println("# Settings:");
         iniFile.printf("#BANK1_PAGE %c\n", activeBank1Page); 
+        iniFile.printf("#USE_FLASH_BANK1 %d\n", useFlashForBank1 ? 1 : 0);
         iniFile.printf("#BAUD_RATE %ld\n", baudRate);
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
@@ -130,9 +140,9 @@ void writeIniFile() {
         iniFile.printf("#VERSION %s\n", VERSION_STRING);
         
         iniFile.close();
-        Serial.println("CHIRP.INI updated.");
+        //Serial.println("CHIRP.INI updated.");
     } else {
-        Serial.println("ERROR: Could not create/update CHIRP.INI!");
+        //Serial.println("ERROR: Could not create/update CHIRP.INI!");
     }
     mutex_exit(&sd_mutex);
 }
@@ -195,9 +205,9 @@ void scanValidBank1Pages() {
     if (validBank1PageCount == 0) {
         strcpy(validBank1Pages, "A");
         validBank1PageCount = 1;
-        Serial.println("No valid Bank 1 pages found. Defaulting to 'A'.");
+        //Serial.println("No valid Bank 1 pages found. Defaulting to 'A'.");
     } else {
-        Serial.printf("Valid Bank 1 Pages: %s\n", validBank1Pages);
+        //Serial.printf("Valid Bank 1 Pages: %s\n", validBank1Pages);
     }
 }
 
@@ -216,7 +226,7 @@ void scanBank1() {
     FsFile root = sd.open("/");
     
     if (!root || !root.isDirectory()) {
-        Serial.println("ERROR: Could not open root directory");
+        //Serial.println("ERROR: Could not open root directory");
         mutex_exit(&sd_mutex);
         return;
     }
@@ -229,7 +239,7 @@ void scanBank1() {
         
         if (bankDir.isDirectory() && strncmp(dirName, targetPrefix, 3) == 0) {
             strncpy(bank1DirName, dirName, sizeof(bank1DirName) - 1);
-            Serial.printf("Found Active Bank 1 Directory: %s\n", bank1DirName);
+            //Serial.printf("Found Active Bank 1 Directory: %s\n", bank1DirName);
             
             // Now, scan files inside this directory
             FsFile file;
@@ -300,7 +310,7 @@ void scanBank1() {
     mutex_exit(&sd_mutex);
 
     if (bank1DirName[0] == '\0') {
-        Serial.printf("WARNING: No Bank 1 directory matching '%s...' found on SD card.\n", targetPrefix);
+        //Serial.printf("WARNING: No Bank 1 directory matching '%s...' found on SD card.\n", targetPrefix);
     }
 }
 
@@ -458,7 +468,64 @@ void playBankNameFeedback(char page) {
 // ===================================
 // Sync Bank 1 to Flash
 // ===================================
-bool syncBank1ToFlash(bool fwUpdated) {
+// ===================================
+// Play Firmware Update Feedback
+// ===================================
+void playFirmwareUpdateFeedback(bool fwUpdated) {
+    if (!fwUpdated) {
+        Serial.println("  Firmware Feedback: Skipped (No update detected)");
+        return;
+    }
+
+    // Check for Voice Feedback Directory
+    bool hasVoiceFeedback = false;
+    mutex_enter_blocking(&sd_mutex);
+    if (sd.exists("/0_System")) {
+        hasVoiceFeedback = true;
+    }
+    mutex_exit(&sd_mutex);
+
+    if (hasVoiceFeedback) {
+        //Serial.println("  Firmware Feedback: Playing voice sequence...");
+        playVoiceFeedback("chirp.wav");
+        playVoiceFeedback("audio_engine.wav");
+        delay(200);
+        playVoiceFeedback("firmware.wav");  
+        playVoiceFeedback("updated.wav");
+        playVoiceFeedback("0002.wav");
+        playVoiceFeedback("new_version.wav");
+        delay(200);
+        
+        // Speak version stored in VERSION_STRING (e.g. 20251221)
+        // Skip first 2 digits ("20"), read pairs: "25", "12", "21"
+        if (strlen(VERSION_STRING) >= 8) {
+           // 25
+           int year = (VERSION_STRING[2] - '0') * 10 + (VERSION_STRING[3] - '0');
+           playVoiceNumber(year);
+           delay(100);
+           
+           // 12
+           int month = (VERSION_STRING[4] - '0') * 10 + (VERSION_STRING[5] - '0');
+           playVoiceNumber(month);
+           delay(100);
+           
+           // 21
+           int day = (VERSION_STRING[6] - '0') * 10 + (VERSION_STRING[7] - '0');
+           playVoiceNumber(day);
+           delay(150);
+        }
+    }
+}
+
+// ===================================
+// Sync Bank 1 to Flash
+// ===================================
+bool syncBank1ToFlash() {
+    if (!useFlashForBank1) {
+        Serial.println("  Skipping sync: Flash memory usage disabled in CHIRP.INI.");
+        return false;
+    }
+
     if (bank1DirName[0] == '\0') {
         Serial.println("  Skipping sync: No active Bank 1 directory found.");
         return false;
@@ -533,39 +600,7 @@ bool syncBank1ToFlash(bool fwUpdated) {
     Serial.println();
     
     // --- Voice Feedback: Start ---
-    if (hasVoiceFeedback) {
-        
-        // 1. Firmware Update Feedback
-        if (fwUpdated) {
-            playVoiceFeedback("chirp.wav");
-            playVoiceFeedback("audio_engine.wav");
-            delay(200);
-            playVoiceFeedback("firmware.wav");  
-            playVoiceFeedback("updated.wav");
-            playVoiceFeedback("0002.wav");
-            playVoiceFeedback("new_version.wav");
-            delay(200);
-            
-            // Speak version stored in VERSION_STRING (e.g. 20251221)
-            // Skip first 2 digits ("20"), read pairs: "25", "12", "21"
-            if (strlen(VERSION_STRING) >= 8) {
-               // 25
-               int year = (VERSION_STRING[2] - '0') * 10 + (VERSION_STRING[3] - '0');
-               playVoiceNumber(year);
-               delay(100);
-               
-               // 12
-               int month = (VERSION_STRING[4] - '0') * 10 + (VERSION_STRING[5] - '0');
-               playVoiceNumber(month);
-               delay(100);
-               
-               // 21
-               int day = (VERSION_STRING[6] - '0') * 10 + (VERSION_STRING[7] - '0');
-               playVoiceNumber(day);
-               delay(150);
-            }
-        }
-    }
+    /* Moved to playFirmwareUpdateFeedback() */
 
     // --- Count Actual Files to Sync ---
     int filesToSync = 0;

@@ -32,6 +32,11 @@ void startMSC() {
 
     Serial.println("Starting MSC Mode...");
 
+    // Create MSC object if it doesn't exist yet
+    if (usb_msc == nullptr) {
+        usb_msc = new Adafruit_USBD_MSC();
+    }
+
     // 1. Stop all SD streams
     for (int i = 0; i < MAX_STREAMS; i++) {
         if (streams[i].active && (streams[i].type == STREAM_TYPE_WAV_SD || streams[i].type == STREAM_TYPE_MP3_SD)) {
@@ -42,12 +47,12 @@ void startMSC() {
     // Setting `g_mscActive = true` effectively disables `fillStreamBuffers` SD access (we will add that check).
     g_mscActive = true;
 
-    // USB MSC Config
+    // USB MSC Config (note the -> instead of . now)
     uint32_t block_count = sd.card()->sectorCount();
-    usb_msc.setID("CHIRP", "Audio SD", "1.0");
-    usb_msc.setReadWriteCallback(msc_read_cb, msc_write_cb, msc_flush_cb);
-    usb_msc.setCapacity(block_count, 512);
-    usb_msc.setUnitReady(true);
+    usb_msc->setID("CHIRP", "Audio SD", "1.0");
+    usb_msc->setReadWriteCallback(msc_read_cb, msc_write_cb, msc_flush_cb);
+    usb_msc->setCapacity(block_count, 512);
+    usb_msc->setUnitReady(true);
     
     // Force re-enumeration
     if (TinyUSBDevice.mounted()) {
@@ -56,7 +61,7 @@ void startMSC() {
       TinyUSBDevice.attach();
     }
 
-    if (usb_msc.begin()) {
+    if (usb_msc->begin()) {  // Note: ->begin() not .begin()
       Serial.println("[+++] MSC Interface ACTIVE.");
     } else {
       Serial.println("[!!!] MSC Setup Failed!");
@@ -68,11 +73,11 @@ void startMSC() {
 // Stop MSC Mode
 // ===================================
 void stopMSC() {
-    if (!g_mscActive) return;
+    if (!g_mscActive || usb_msc == nullptr) return;
 
     Serial.println("Stopping MSC Mode...");
     
-    usb_msc.setUnitReady(false);
+    usb_msc->setUnitReady(false);  // Note: -> instead of .
     
     // Detach to remove drive from PC
     if (TinyUSBDevice.mounted()) {
