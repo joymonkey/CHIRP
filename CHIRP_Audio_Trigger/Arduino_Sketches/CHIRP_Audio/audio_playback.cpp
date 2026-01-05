@@ -114,6 +114,11 @@ void fillStreamBuffers() {
         AudioStream* s = &streams[i];
         
         if (!s->active || s->fileFinished) continue;
+
+        // Safety: If MSC is active, do NOT touch SD card streams!
+        if (g_mscActive && (s->type == STREAM_TYPE_WAV_SD || s->type == STREAM_TYPE_MP3_SD)) {
+            continue; 
+        }
         
         // Check if buffer needs data
         int available = s->ringBuffer->availableForWrite();
@@ -478,13 +483,26 @@ void loop1() {
 bool startStream(int streamIdx, const char* filename) {
     if (streamIdx < 0 || streamIdx >= MAX_STREAMS) return false;
     
+    // Safety: If MSC active, block SD streams
+    // We check file type later, but checking here is cleaner if we know it isn't flash.
+    // However, we identify flash via filename prefix.
+    bool isFlash = (strncmp(filename, "/flash/", 7) == 0);
+    
+    if (g_mscActive && !isFlash) {
+        log_message(String("Stream ") + streamIdx + ": Blocked (MSC Active)");
+        return false;
+    }
+
+    // Ensure I2S is active
+    g_allowAudio = true;
+    
     stopStream(streamIdx); // Ensure stopped first
     
     AudioStream* s = &streams[streamIdx];
     
     // Determine file type and location
     // Convention: "/flash/..." is Flash, otherwise SD
-    bool isFlash = (strncmp(filename, "/flash/", 7) == 0);
+    // bool isFlash = (strncmp(filename, "/flash/", 7) == 0); // Already declared above
     const char* ext = strrchr(filename, '.');
     bool isMP3 = (ext && strcasecmp(ext, ".mp3") == 0);
     

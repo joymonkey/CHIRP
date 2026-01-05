@@ -6,17 +6,17 @@
 #include <I2S.h>
 #include "pico/mutex.h"
 #include "MP3DecoderHelix.h"
+#include <Adafruit_TinyUSB.h>
 
 using namespace libhelix;
 
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20251223"
+#define VERSION_STRING "20260104"
 //#define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
-#define LED_PIN 25 //LED pin of the Pimoroni Pico Plus 2
 #define SD_CS   13
 #define SD_MISO 12
 #define SD_MOSI 15
@@ -25,6 +25,7 @@ using namespace libhelix;
 #define I2S_LRCK 10
 #define I2S_DATA 11
 #define NEOPIXEL_PIN 19 //CHIRP Audio Trigger PCB has 3 neopixels on pin 19
+#define PIN_MSC_TRIGGER 7 // Pull low to enable MSC mode
 
 // UART Pins (Serial2)
 #define UART_TX 4
@@ -121,7 +122,10 @@ extern mutex_t log_mutex;
 extern SoundFile bank1Sounds[MAX_SOUNDS];
 extern int bank1SoundCount;
 extern char bank1DirName[64]; 
+
 extern char activeBank1Page;
+extern char validBank1Pages[27];
+extern int validBank1PageCount;
 extern SDBank sdBanks[MAX_SD_BANKS];
 extern int sdBankCount;
 
@@ -141,6 +145,9 @@ extern volatile int16_t masterAttenMultiplier;
 // MP3 Decoder
 extern MP3DecoderHelix* mp3Decoder; // "Option 2" PSRAM fix
 
+// Configuration
+extern long baudRate;
+
 // Filename Checksum
 extern uint32_t globalFilenameChecksum;
 
@@ -149,6 +156,10 @@ extern SerialQueue serial2Queue;
 
 // Control I2S Hardware State from Core 0
 extern volatile bool g_allowAudio;
+
+// MSC State
+extern volatile bool g_mscActive;
+extern Adafruit_USBD_MSC usb_msc;
 
 // ===================================
 // NEW: Flexible Audio Architecture
@@ -254,12 +265,18 @@ void processSerialCommands(Stream &serial); // Dual-buffer fix
 
 // from file_management.cpp
 bool parseIniFile();
+void writeIniFile();
+void scanValidBank1Pages();
 void scanBank1();
 bool syncBank1ToFlash(bool fwUpdated);
 void scanSDBanks();
 void scanRootTracks();
 SDBank* findSDBank(uint8_t bank, char page);
 const char* getSDFile(uint8_t bank, char page, int index);
+void playVoiceFeedback(const char* filename); // Exposed for other files
+void playVoiceNumber(int number); // Exposed for other files
+void playBaudFeedback(long rate); // Helper for baud rate feedback
+void playBankNameFeedback(char page); // Helper for Bank Name feedback
 
 // from audio_playback.cpp
 void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref);
@@ -293,5 +310,10 @@ void playErrorSequence();
 void updateSyncLEDs(bool fileTransferEvent = false);
 void updateRuntimeLEDs();
 
+// from msc_interface.h
+void setupMSC();
+void pollMSCTrigger();
+void startMSC();
+void stopMSC();
 
 #endif // CONFIG_H

@@ -58,6 +58,18 @@ bool parseIniFile() {
                         foundVersion = true;
                     }
                 }
+                // Check BAUD_RATE
+                else if (strncasecmp(command, "BAUD_RATE", 9) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' '); // Find first char of value
+                        long rate = atol(value);
+                        if (rate == 2400 || rate == 9600 || rate == 19200 || 
+                            rate == 38400 || rate == 57600 || rate == 115200) {
+                            baudRate = rate;
+                        }
+                    }
+                }
             }
         }
         iniFile.close();
@@ -74,28 +86,119 @@ bool parseIniFile() {
     }
 
     // Rewrite INI if needed (missing Page, missing Version, or Version Mismatch)
+    mutex_exit(&sd_mutex); // Release mutex before calling writeIniFile which takes it again
+    
     if (!foundPage || versionMismatch) {
-        iniFile = sd.open("CHIRP.INI", FILE_WRITE | O_TRUNC);
-        if (iniFile) {
-            iniFile.println("# CHIRP Configuration File");
-            iniFile.println("# Set the active Bank 1 page (A-Z)");
-            iniFile.println("# This selects which '1X_...' directory to sync to flash.");
-            iniFile.printf("#BANK1_PAGE %c\n", activeBank1Page); 
-            iniFile.println();
-            iniFile.println("# Firmware Version (Last Booted)");
-            iniFile.println("# Do not edit this manually unless you want to force voice feedback.");
-            iniFile.printf("#VERSION %s\n", VERSION_STRING);
-            
-            iniFile.close();
-            if (!foundPage) Serial.println("CHIRP.INI created/updated with defaults.");
-            else Serial.println("CHIRP.INI updated with new version.");
-        } else {
-            Serial.println("ERROR: Could not create/update CHIRP.INI!");
-        }
+        writeIniFile();
     }
-    mutex_exit(&sd_mutex);
     
     return versionMismatch;
+}
+
+// ===================================
+// Write CHIRP.INI File
+// ===================================
+void writeIniFile() {
+    // PRECONDITION: mutex_enter_blocking(&sd_mutex) should be called by caller if strictly needed,
+    // BUT since we are opening 'w' which might take time, and this is system config, 
+    // we should handle mutex here OR assume caller handles it.
+    // parseIniFile already holds the mutex when calling this!
+    // However, other callers (button press) won't have it yet.
+    // Recursive mutexes aren't standard here, so we must be careful.
+    // Let's assume callers MUST NOT hold the mutex, and we take it here.
+    // BUT parseIniFile DOES hold it. 
+    // FIX: Refactor parseIniFile to release before calling, or duplicate logic?
+    // EASIER: Create `writeIniFileInternal` or just put the logic here and be careful.
+    // Let's make writeIniFile independent and fix parseIniFile to release first?
+    // parseIniFile has logic: (!foundPage || versionMismatch) -> rewrite.
+    // It's safer to just duplicate the write logic inside parseIniFile for now (it was already there),
+    // OR release mutex, call writeIniFile, then return.
+    
+    // Let's implement writeIniFile as a standalone function that TAKES the mutex.
+    // And in parseIniFile, we will release mutex before calling it.
+    
+    mutex_enter_blocking(&sd_mutex);
+    FsFile iniFile = sd.open("CHIRP.INI", FILE_WRITE | O_TRUNC);
+    if (iniFile) {
+        iniFile.println("# CHIRP Configuration File");
+        iniFile.println("# Settings:");
+        iniFile.printf("#BANK1_PAGE %c\n", activeBank1Page); 
+        iniFile.printf("#BAUD_RATE %ld\n", baudRate);
+        iniFile.println();
+        iniFile.println("# Firmware Version (Last Booted)");
+        iniFile.println("# Do not edit this manually unless you want to force voice feedback.");
+        iniFile.printf("#VERSION %s\n", VERSION_STRING);
+        
+        iniFile.close();
+        Serial.println("CHIRP.INI updated.");
+    } else {
+        Serial.println("ERROR: Could not create/update CHIRP.INI!");
+    }
+    mutex_exit(&sd_mutex);
+}
+
+
+
+
+// ===================================
+// Scan Valid Bank 1 Pages (Run at startup)
+// ===================================
+void scanValidBank1Pages() {
+    validBank1PageCount = 0;
+    validBank1Pages[0] = '\0';
+    
+    mutex_enter_blocking(&sd_mutex);
+    FsFile root = sd.open("/");
+    if (!root || !root.isDirectory()) {
+        mutex_exit(&sd_mutex);
+        return;
+    }
+    
+    FsFile file;
+    while (file.openNext(&root, O_RDONLY)) {
+        if (file.isDirectory()) {
+            char dirName[64];
+            file.getName(dirName, sizeof(dirName));
+            
+            // Check for pattern "1[A-Z]_"
+            // Length must be at least 3
+            if (strlen(dirName) >= 3 && 
+                dirName[0] == '1' && 
+                dirName[1] >= 'A' && dirName[1] <= 'Z' && 
+                dirName[2] == '_') {
+                
+                char page = dirName[1];
+                
+                // Add if not already present
+                if (!strchr(validBank1Pages, page)) {
+                    validBank1Pages[validBank1PageCount++] = page;
+                    validBank1Pages[validBank1PageCount] = '\0';
+                }
+            }
+        }
+        file.close();
+    }
+    root.close();
+    mutex_exit(&sd_mutex);
+    
+    // Sort logic (Bubble sort)
+    for (int i = 0; i < validBank1PageCount - 1; i++) {
+        for (int j = 0; j < validBank1PageCount - i - 1; j++) {
+            if (validBank1Pages[j] > validBank1Pages[j+1]) {
+                char temp = validBank1Pages[j];
+                validBank1Pages[j] = validBank1Pages[j+1];
+                validBank1Pages[j+1] = temp;
+            }
+        }
+    }
+    
+    if (validBank1PageCount == 0) {
+        strcpy(validBank1Pages, "A");
+        validBank1PageCount = 1;
+        Serial.println("No valid Bank 1 pages found. Defaulting to 'A'.");
+    } else {
+        Serial.printf("Valid Bank 1 Pages: %s\n", validBank1Pages);
+    }
 }
 
 
@@ -264,6 +367,88 @@ void playVoiceNumber(int number) {
     snprintf(numFile, sizeof(numFile), "%04d.wav", number);
     playVoiceFeedback(numFile);
 }
+
+void playBaudFeedback(long rate) {
+    playVoiceFeedback("setting.wav");
+    playVoiceFeedback("serial.wav"); 
+    playVoiceFeedback("baud_rate.wav"); 
+    
+    // User Requested Logic:
+    // 2400 -> "24" "hundred"
+    // 115200 -> "11" "52" "hundred"
+    
+    long hundreds = rate / 100;
+    
+    if (hundreds > 100) {
+        // e.g. 1152 -> 11, 52
+        int p1 = hundreds / 100;
+        int p2 = hundreds % 100;
+        playVoiceNumber(p1);
+        playVoiceNumber(p2);
+    } else {
+        // e.g. 24 -> 24
+        playVoiceNumber((int)hundreds);
+    }
+    
+    playVoiceFeedback("hundred.wav");
+    
+    delay(100);
+    // "Hz"
+    playVoiceFeedback("hz.wav");
+}
+
+void playBankNameFeedback(char page) {
+    // this spells out the folder name of the currently selected Bank 1 page
+    // 1. Find the directory: "1<Page>_*"
+    char pattern[4];
+    snprintf(pattern, sizeof(pattern), "1%c_", page);
+    
+    char suffix[64] = "";
+    bool found = false;
+    
+    mutex_enter_blocking(&sd_mutex);
+    FsFile root = sd.open("/");
+    if (root) {
+        FsFile file;
+        while(file.openNext(&root, O_RDONLY)) {
+            if(file.isDirectory()) {
+                 char name[64];
+                 file.getName(name, sizeof(name));
+                 if(strncasecmp(name, pattern, 3) == 0) {
+                     // Found it
+                     strncpy(suffix, name + 3, sizeof(suffix)-1);
+                     found = true;
+                     // Don't break immediately, we need to close file? 
+                     // file.close() happens after if block usually.
+                     // But we want to stop.
+                     file.close(); // Close current
+                     break;
+                 }
+            }
+            file.close();
+        }
+        root.close();
+    }
+    mutex_exit(&sd_mutex);
+    
+    if (!found || suffix[0] == '\0') return;
+    
+    // 2. Spell it out
+    for(int i=0; suffix[i] != '\0'; i++) {
+        char c = suffix[i];
+        if (isdigit(c)) {
+            playVoiceNumber(c - '0');
+        } else if (isalpha(c)) {
+            char letterFile[16];
+            char lower = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
+            snprintf(letterFile, sizeof(letterFile), "_%c.wav", lower);
+            playVoiceFeedback(letterFile);
+        }
+        // Small delay between characters
+        //delay(80); 
+    }
+}
+
 
 
 // ===================================

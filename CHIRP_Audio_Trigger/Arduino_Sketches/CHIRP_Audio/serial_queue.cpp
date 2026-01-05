@@ -1,4 +1,3 @@
-//#include "serial_queue.h"
 #include "config.h"
 
 // ===================================

@@ -1,19 +1,16 @@
 /*
  * CHIRP Audio Trigger
  * 
- * Description:
  * Multi-stream audio playback engine for RP2350.
- * Supports simultaneous playback of up to 3 streams (WAV or MP3).
- * Sound file manifest handling; so your droid knows what sounds are available.
  * 
- * Features:
- * - 3 Independent Audio Streams
+ * - 3 Independent Audio Streams (WAV or MP3)
  * - Supports new CHIRP serial commands and legacy MP3 Trigger commands
  * - Dual MP3 Decoders (Helix) running on Core 0
  * - Ring Buffers in PSRAM (512KB per stream) for glitch-free playback
  * - Automatic mixing on Core 1
  * - Dynamic resource allocation for decoders
  * - Robust WAV/MP3 file handling with auto-stop
+ * - Sound file manifest handling (so your droid knows what sounds are available)
  *
  * File Format Notes:
  * The system expects sound files to have a 44.1 kHz sample rate (CD quality).
@@ -79,7 +76,7 @@
 
 #include "config.h"
 #include <CRC32.h> // For checksum
-#include <Adafruit_NeoPixel.h>
+//#include <Adafruit_NeoPixel.h>
 
 volatile bool g_allowAudio = false; // Start muted (for startup sync)
 
@@ -112,26 +109,32 @@ volatile bool g_allowAudio = false; // Start muted (for startup sync)
 // SETUP (Core 0)
 // ===================================
 void setup() {
-    // LED
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, LOW);
-    
-    // Initialize Blinkies
+    // 1. Safe State for SD Card (Deselect)
+    pinMode(SD_CS, OUTPUT);
+    digitalWrite(SD_CS, HIGH);
+
+    // 2. Stabilization Delay (Critical for USB/Power)
+    //delay(2000);
+
+    // 3. Status LEDs
     initBlinkies();
     playStartupSequence();
-    //delay(1750);
+    
+    // 4. Initialize Serial (CDC)
+    // Initialize USB Serial early so it enumerates while we do other setup
+    Serial.begin(baudRate);
+    
+    // 5. Setup Serial2 (UART)
+    Serial2.setTX(UART_TX);
+    Serial2.setRX(UART_RX);
+    Serial2.begin(baudRate);
+    
+    //delay(500); // Short delay for Serial to wake up
 
-    // Initialize SPI1 FIRST
+    // 6. Initialize SPI Pins
     SPI1.setRX(SD_MISO);
     SPI1.setTX(SD_MOSI);
     SPI1.setSCK(SD_SCK);
-    
-    // USB Serial (mainly used for development)
-    Serial.begin(115200);
-    // Serial2 receives commands and sends acknowledgements
-    Serial2.setTX(UART_TX);
-    Serial2.setRX(UART_RX);
-    Serial2.begin(115200);
     
     
     Serial.println("\n╔═══════════════════════════════════════╗");
@@ -144,6 +147,9 @@ void setup() {
     pinMode(PIN_BTN_NAV, INPUT_PULLUP);
     pinMode(PIN_BTN_FWD, INPUT_PULLUP);
     pinMode(PIN_BTN_REV, INPUT_PULLUP);
+    
+    // Initialize MSC Hardware (Pin)
+    setupMSC();
 
     // Initialize Audio System (Streams, Buffers, Flags)
     initAudioSystem();
@@ -211,6 +217,10 @@ void setup() {
     Serial.println("\n=== Reading CHIRP.INI ===");
     bool fwUpdated = parseIniFile();
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
+
+    // NEW: Scan for Valid Bank 1 Pages (for button logic)
+    Serial.println("\n=== Scanning Valid Bank 1 Pages ===");
+    scanValidBank1Pages();
                   
     // Scan Bank 1 on SD
     Serial.println("\n=== Scanning Bank 1 (SD Card) ===");
@@ -283,7 +293,6 @@ void setup() {
 
     Serial.println();
     
-    digitalWrite(LED_PIN, HIGH);
 }
 
 // ===================================
@@ -294,6 +303,9 @@ void loop() {
     static uint32_t maxLoopTime = 0;
     uint32_t startMicros = micros();
     #endif
+    
+    // Poll MSC Trigger (Pin)
+    pollMSCTrigger();
     
     // Handle serial commands
     processSerialCommands(Serial);   // USB debug
@@ -320,9 +332,93 @@ void loop() {
         bool revState = digitalRead(PIN_BTN_REV);
         
         // Active LOW (Pressed = 0)
-        if (lastNavState == HIGH && navState == LOW) action_togglePlayPause();
-        if (lastFwdState == HIGH && fwdState == LOW) action_playNext();
-        if (lastRevState == HIGH && revState == LOW) action_playPrev();
+        
+        // --- BUTTON COMBINATION LOGIC ---
+        // Prev Button (PIN_BTN_REV) acts as Modifier
+        static bool prevUsedAsModifier = false;
+
+        // Reset modifier flag on Prev Press (when button goes LOW)
+        if (lastRevState == HIGH && revState == LOW) {
+            prevUsedAsModifier = false;
+        }
+
+        if (revState == LOW) {
+             // --- MODIFIER HELD ---
+             
+             // 1. Prev + Start/Stop = Cycle Baud Rate
+             if (lastNavState == HIGH && navState == LOW) {
+                   prevUsedAsModifier = true; // Flag as used for combo
+                   
+                   // Cycle: 115200 -> 9600 -> 2400 -> 115200
+                   if (baudRate == 115200) baudRate = 9600;
+                   else if (baudRate == 9600) baudRate = 2400;
+                   else baudRate = 115200;
+                   
+                   writeIniFile();
+                   playBaudFeedback(baudRate);
+                   
+                   Serial2.end();
+                   Serial2.begin(baudRate);
+                   Serial.println("\nBaud Rate Changed.");
+             }
+             
+             // 2. Prev + Next = Cycle Bank 1 Page (A-Z)
+             if (lastFwdState == HIGH && fwdState == LOW) {
+                   prevUsedAsModifier = true; // Flag as used for combo
+                   
+                   // Find current index
+                   int currentIndex = 0;
+                   for (int i = 0; i < validBank1PageCount; i++) {
+                       if (validBank1Pages[i] == activeBank1Page) {
+                           currentIndex = i;
+                           break;
+                       }
+                   }
+                   
+                   // Move to next valid page
+                   int nextIndex = (currentIndex + 1) % validBank1PageCount;
+                   activeBank1Page = validBank1Pages[nextIndex];
+                   
+                   writeIniFile();
+                   
+                   // Feedback
+                   playVoiceFeedback("setting.wav");
+                   playVoiceFeedback("sound_bank.wav");
+                   playVoiceFeedback("0001.wav");
+                   playVoiceFeedback("page.wav");
+                   
+                   // Play Letter
+                   char letterFile[16];
+                   char lowerPage = (activeBank1Page >= 'A' && activeBank1Page <= 'Z') ? (activeBank1Page + 32) : activeBank1Page;
+                   snprintf(letterFile, sizeof(letterFile), "_%c.wav", lowerPage);
+                   playVoiceFeedback(letterFile);
+                   
+                   // Spell out Bank Name
+                   playBankNameFeedback(activeBank1Page);
+                   
+                   Serial.printf("Bank 1 Page changed to: %c\n", activeBank1Page);
+             }
+             
+        } 
+        
+        // --- STANDARD BUTTON ACTIONS ---
+        
+        // Start/Stop: Falling Edge, ONLY if Prev NOT held
+        if (lastNavState == HIGH && navState == LOW) {
+            if (revState == HIGH) action_togglePlayPause();
+        }
+
+        // Next: Falling Edge, ONLY if Prev NOT held
+        if (lastFwdState == HIGH && fwdState == LOW) {
+            if (revState == HIGH) action_playNext();
+        }
+
+        // Prev: RISING EDGE (Release), ONLY if NOT used as modifier
+        if (lastRevState == LOW && revState == HIGH) {
+            if (!prevUsedAsModifier) {
+                 action_playPrev();
+            }
+        }
         
         lastNavState = navState;
         lastFwdState = fwdState;

@@ -9,8 +9,6 @@
 #define LED_BRIGHTNESS 20 // Low brightness
 
 // Initialize NeoPixel strip
-// Using standard constructor. Adafruit library typically handles PIO on RP2040/RP2350 automatically if supported/enabled in core.
-// If direct bit-banging causes issues, we might need adjustments, but default usually works best.
 Adafruit_NeoPixel blinkies(NUM_LEDS, NEOPIXEL_PIN, NEO_GRB + NEO_KHZ800);
 
 // State Cache
@@ -170,6 +168,43 @@ void updateRuntimeLEDs() {
     // Skip if busy (crucial for audio stability)
     if (isCpuBusy()) return;
     
+    // --- MSC Mode Override ---
+    if (g_mscActive) {
+        static float mscPhase = 0;
+        mscPhase += 0.1f; // Faster than idle
+        if (mscPhase >= 6.28f) mscPhase -= 6.28f;
+        
+        static float mscPos = 0;
+        static float mscDir = 0.2f; // Faster scan
+        mscPos += mscDir;
+        
+        if (mscPos >= NUM_LEDS - 0.5f) {
+            mscPos = NUM_LEDS - 0.5f;
+            mscDir = -mscDir;
+        } else if (mscPos <= -0.5f) {
+            mscPos = -0.5f;
+            mscDir = -mscDir;
+        }
+        
+        // Green/Yellow Cycling
+        // Green (0,255,0) <-> Yellow (255,255,0)
+        // Oscillate Red component
+        uint8_t redAmt = (uint8_t)((sin(mscPhase) + 1.0f) * 127.5f);
+        
+        for(int i=0; i<NUM_LEDS; i++) {
+            float dist = abs(mscPos - i);
+            float bright = 1.0f - dist;
+            if (bright < 0) bright = 0;
+            bright = pow(bright, 2.0f); 
+            
+            uint8_t r = (uint8_t)(redAmt * bright);
+            uint8_t g = (uint8_t)(255 * bright);
+            setPixel(i, r, g, 0);
+        }
+        showBlinkies();
+        return;
+    }
+
     if (!isIdle) {
         // --- Playback Mode ---
         // Solid Colors: Blue (WAV), Green (MP3)

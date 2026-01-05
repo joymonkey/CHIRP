@@ -445,6 +445,66 @@ void processSerialCommands(Stream &serial) {
                     }
                 }
                 
+
+                
+                // BAUD Command
+                else if (strncmp(cmdBuffer, "BAUD:", 5) == 0) {
+                    long rate = atol(cmdBuffer + 5);
+                    if (rate == 2400 || rate == 9600 || rate == 19200 || 
+                        rate == 38400 || rate == 57600 || rate == 115200) {
+                        baudRate = rate;
+                        writeIniFile();
+                        sendSerialResponse(serial, "PACK:BAUD");
+                        sendSerialResponseF(serial, "BAUD:%ld", baudRate);
+                        
+                        // Update Serial2 immediately?
+                        Serial2.end();
+                        Serial2.begin(baudRate);
+                    } else {
+                        serial.println("ERR:PARAM - Invalid baud rate");
+                    }
+                }
+
+                // BPAGE Command (Bank 1 Page)
+                else if (strncmp(cmdBuffer, "BPAGE:", 6) == 0) {
+                    char page = cmdBuffer[6];
+                    // Uppercase check
+                    if (page >= 'a' && page <= 'z') page -= 32;
+                    
+                    if (page >= 'A' && page <= 'Z') {
+                        activeBank1Page = page;
+                        writeIniFile();
+                        sendSerialResponse(serial, "PACK:BPAGE");
+                        sendSerialResponseF(serial, "BPAGE:%c", activeBank1Page);
+                        serial.println("Note: Reboot required to reload Bank 1.");
+                    } else {
+                        serial.println("ERR:PARAM - Invalid page (A-Z)");
+                    }
+                }
+
+                // MUSB Command (MSC Mode)
+                else if (strncmp(cmdBuffer, "MUSB", 4) == 0) {
+                     // Check for arg
+                     char* ptr = cmdBuffer + 4;
+                     if (*ptr == ':') {
+                         int val = atoi(ptr + 1);
+                         if (val == 1) {
+                             startMSC();
+                             sendSerialResponse(serial, "PACK:MUSB");
+                             sendSerialResponse(serial, "MUSB:1");
+                         } else {
+                             stopMSC();
+                             sendSerialResponse(serial, "PACK:MUSB");
+                             sendSerialResponse(serial, "MUSB:0");
+                         }
+                     } else {
+                         // Toggle or Status?
+                         // Let's print status if no arg
+                         if (g_mscActive) serial.println("MUSB:1");
+                         else serial.println("MUSB:0");
+                     }
+                }
+                
                 // Unknown Command
                 else {
                     serial.println("ERR:UNKNOWN");
