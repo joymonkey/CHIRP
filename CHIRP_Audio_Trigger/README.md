@@ -10,34 +10,36 @@ The CHIRP Audio Trigger is a sound file player similar to the trusty Sparkfun/Ro
 # Serial Commands
 Support for the same serial commands as the MP3 trigger, so this board can be used as a drop-in replacement. We also have some new serial commands to support the advanced functions.
 
-- PLAY
-- STOP
-- VOL
-- STAT
+- PLAY (stops a stream. no, only kidding, plays a sound from a Sound Bank folder)
+- STOP (stop all streams are specified stream)
+- VOL (set global volume or individual stream volume)
+- STAT (get the current status of a specified stream)
 - GMAN (Get Manifest of how many sounds are in each page of each Sound Bank)
-- LIST (List dounds stored in Flash
-- GNME (Get the name of a particular sound)
-- CHRP (play a basic sweep)
-- CCRC (clear stored CRC value)
-- BAUD (change the serial baud rate)
-- BPAGE (change the default page for Bank 1)
+- LIST (List sounds stored in Sound Bank 1 as well as sound counts in Sound Banks 2-6) 
+- GNME (Get the name of a particular sound in a Sound Bank)
+- CHRP (play a basic sweep sound)
+- CCRC (clear stored CRC value to force a re-sync of Sound Bank 1 to flash)
+- BAUD (change the serial baud rate - 2400, 9600, 19200, 38400, 57600 or 115200)
+- BPAGE (change the default page for Bank 1 - requires reboot after changing)
+- MUSB (enable/disable Mass Storage Class for USB - to access the SD card over USB)
 
 # Button Actions
 The Prev, Play/Stop and Next buttons act similarly to the navigation buttons of the MP3 Trigger, playing files that are stored in the root of the SD card. They also have additional configuration functions that can be useful for setting up your droid without needed to send specific serial commands or edit the CHIRP.INI file.
 
  - Hold "Prev" button + press "Play/Stop" button - this will change the serial baud rate (cycling between 115200, 2400 and 9600).
  - Hold "Prev" button + press "Next" button - this will change the Sound Bank 1 from its current value (by default "A"). You must have appropriate folders in your SD card for this change to work (for example, "1A_R2D2" and "1B_R5D4").
+ - Not a button, but pulling GPIO 7 to ground enables USB Mass Storage Class. 
 
 # SD Card Structure
 To simpify browsing of files from the transmitter side of things, sound files should be arranged into several "Sound Banks" on the SD card. 6 Sound Banks are supported, each one can have up to 26 "Pages". Sound Bank 1 is reserved specificalyl for primary droid vocals. Sound Banks 2-6can be for whatever custom music or sound effects are desired.
 ## Sound Bank 1
-Sound Bank 1 should contain WAV files, and total no more than 14MB. Sound Bank 1 page folders should be named similarly to...
+Sound Bank 1 should contain WAV files, and total no more than 14MB (if you want to sync to flash memory, otherwise disregard). Sound Bank 1 page folders should be named similarly to...
 - 1A_R2D2
 - 1B_R5D4
 - 1C_K2SO
 - etc
 
-One of these pages/folders will be set as the droids primary sounds. For example, you would set it to A for R2D2 or B for R5D4. Changing this value will force sounds files to be re-synced at the next power cycle.   
+One of these pages/folders will be set as the droids primary sounds. For example, you would set it to A for R2D2 or B for R5D4. Changing this value will force sounds files to be re-synced at the next power cycle. This is set in the CHIRP.INI config file, and defaults to A.   
 ## Sound Banks 2-6
 Sound Banks 2-6 have looser rules and shoudl be named similarly to...
 - 2A_StarWarsMusic
