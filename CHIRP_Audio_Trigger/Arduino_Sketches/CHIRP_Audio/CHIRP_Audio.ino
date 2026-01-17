@@ -26,7 +26,7 @@
  * droid operators to easily update sounds on the droid by re-arranging the SD card,
  * without a need to adjust any code.
  * The system supports up to 6 sound banks, each can have numerous "pages" of sounds.
- * Sound Bank 1 is for the droids primary vocals. These should all be WAV files, and total
+ * Sound Bank 1 is for the droids primary vocals. These can be WAV or MP3 files, and total
  * no more than 14MB. Files starting with similar characters but ending with consecutive
  * numbers will be considered as a sound variant group, and when triggered a single variant
  * will be randomly chosen from the group.

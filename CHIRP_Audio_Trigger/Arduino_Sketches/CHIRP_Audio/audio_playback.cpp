@@ -157,6 +157,34 @@ void fillStreamBuffers() {
                 }
             }
             
+        } else if (s->type == STREAM_TYPE_MP3_FLASH) {
+            // --- MP3 (Flash) ---
+            if (available > 16384) {
+                uint8_t mp3Buf[512]; 
+                int bytesRead = 0;
+                
+                mutex_enter_blocking(&flash_mutex);
+                if (s->flashFile) {
+                    bytesRead = s->flashFile.read(mp3Buf, sizeof(mp3Buf));
+                    if (bytesRead == 0) {
+                        if (!s->flashFile.available()) {
+                            s->fileFinished = true;
+                            #ifdef DEBUG
+                            log_message(String("Stream ") + i + ": MP3 (Flash) EOF detected (read 0)");
+                            #endif
+                        }
+                    }
+                }
+                mutex_exit(&flash_mutex);
+                
+                if (bytesRead > 0 && s->decoderIndex != -1) {
+                    // Set global context before writing
+                    currentDecodingStream = i;
+                    mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    currentDecodingStream = -1;
+                }
+            }
+
         } else if (s->type == STREAM_TYPE_WAV_SD || s->type == STREAM_TYPE_WAV_FLASH) {
             // --- WAV (SD or Flash) ---
             // WAV is simpler, we read small chunks.
@@ -506,7 +534,47 @@ bool startStream(int streamIdx, const char* filename) {
     const char* ext = strrchr(filename, '.');
     bool isMP3 = (ext && strcasecmp(ext, ".mp3") == 0);
     
-    if (isFlash) {
+    if (isFlash && isMP3) {
+         // --- MP3 from Flash ---
+        mutex_enter_blocking(&flash_mutex);
+        s->flashFile = LittleFS.open(filename, "r");
+        if (!s->flashFile) {
+            log_message(String("Stream ") + streamIdx + ": ERROR - Could not open flash file");
+            mutex_exit(&flash_mutex);
+            return false;
+        }
+
+        // --- MP3 Setup (Shared logic) ---
+        // Find free decoder
+        int decoderIdx = -1;
+        for (int i = 0; i < MAX_MP3_DECODERS; i++) {
+            if (!mp3DecoderInUse[i]) {
+                decoderIdx = i;
+                mp3DecoderInUse[i] = true;
+                break;
+            }
+        }
+        
+        if (decoderIdx == -1) {
+            log_message(String("Stream ") + streamIdx + ": ERROR - No MP3 decoders available");
+            s->flashFile.close();
+            mutex_exit(&flash_mutex);
+            return false;
+        }
+        
+        s->decoderIndex = decoderIdx;
+        s->type = STREAM_TYPE_MP3_FLASH;
+        s->channels = 2; 
+        s->sampleRate = 0; // Unknown until first frame decoded 
+        
+        // Initialize Decoder
+        if (mp3Decoders[decoderIdx]) {
+            mp3Decoders[decoderIdx]->begin();
+        }
+        
+        mutex_exit(&flash_mutex);
+         
+    } else if (isFlash) {
         // --- WAV from Flash ---
         mutex_enter_blocking(&flash_mutex);
         s->flashFile = LittleFS.open(filename, "r");
@@ -681,7 +749,7 @@ void stopStream(int streamIdx) {
     s->active = false;
     
     // Release Decoder
-    if (s->type == STREAM_TYPE_MP3_SD && s->decoderIndex != -1) {
+    if ((s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_MP3_FLASH) && s->decoderIndex != -1) {
         if (mp3Decoders[s->decoderIndex]) {
             mp3Decoders[s->decoderIndex]->end();
         }
@@ -690,7 +758,7 @@ void stopStream(int streamIdx) {
     }
     
     // Close Files
-    if (s->type == STREAM_TYPE_WAV_FLASH) {
+    if (s->type == STREAM_TYPE_WAV_FLASH || s->type == STREAM_TYPE_MP3_FLASH) {
         mutex_enter_blocking(&flash_mutex);
         if (s->flashFile) s->flashFile.close();
         mutex_exit(&flash_mutex);

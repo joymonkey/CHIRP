@@ -160,9 +160,13 @@ void processSerialCommands(Stream &serial) {
                             sound.lastVariantPlayed = variantIdx;
                             const char* filename = sound.variants[variantIdx];
                             
-                            // Prefix with /flash/ for startStream to know it's flash
+                            // Dynamic path (Flash or SD)
                             char fullPath[80];
-                            snprintf(fullPath, sizeof(fullPath), "/flash/%s", filename);
+                            if (useFlashForBank1) {
+                                snprintf(fullPath, sizeof(fullPath), "/flash/%s", filename);
+                            } else {
+                                snprintf(fullPath, sizeof(fullPath), "/%s/%s", bank1DirName, filename);
+                            }
                             
                             // Send acknowledgement (queued for Serial2)
                             sendSerialResponse(serial, "PACK:PLAY");

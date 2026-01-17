@@ -13,7 +13,7 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20260105"
+#define VERSION_STRING "20260110"
 //#define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
@@ -175,7 +175,8 @@ enum StreamType {
     STREAM_TYPE_INACTIVE = 0,
     STREAM_TYPE_WAV_FLASH, // Legacy optimized path (optional, or treat as generic)
     STREAM_TYPE_WAV_SD,
-    STREAM_TYPE_MP3_SD
+    STREAM_TYPE_MP3_SD,
+    STREAM_TYPE_MP3_FLASH
 };
 
 struct RingBuffer {
