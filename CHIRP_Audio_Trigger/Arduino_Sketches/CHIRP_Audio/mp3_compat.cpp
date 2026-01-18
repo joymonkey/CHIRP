@@ -22,11 +22,39 @@ void playRootTrack(int index) {
     char fullPath[128];
     snprintf(fullPath, sizeof(fullPath), "/%s", filename);
     
-    // Stop Stream 1 (SD Stream) and Play
-    stopStream(1);
-    if (startStream(1, fullPath)) {
+    int streamToUse = 1; // Default to Stream 1 for legacy behavior
+    
+    if (!legacyMonophonic) {
+        // Polyphonic Mode: Find first available stream
+        // Start checking from Stream 0 (assuming Stream 0 is also available for polyphony)
+        // or Stream 1 if Stream 0 is reserved for System? 
+        // System usually uses Stream 0. Let's use any available.
+        streamToUse = -1;
+        
+        // Try to find an inactive stream first
+        for (int i = 0; i < maxStreams; i++) {
+            if (!streams[i].active) {
+                streamToUse = i;
+                break;
+            }
+        }
+        
+        // If all active, steal the oldest one? Or just default to Stream 1?
+        // Let's default to Stream 1 if all full, effectively behaving like legacy for that moment
+        if (streamToUse == -1) {
+            streamToUse = 1;
+             // Optional: stealing logic could go here
+        }
+    }
+
+    // Stop Stream if Monophonic (or if we are reusing an active stream)
+    if (legacyMonophonic || streams[streamToUse].active) {
+        stopStream(streamToUse);
+    }
+    
+    if (startStream(streamToUse, fullPath)) {
         lastPlayedRootIndex = index;
-        Serial.printf("COMPAT: Playing Root Track %d/%d (%s)\n", index + 1, rootTrackCount, filename);
+        Serial.printf("COMPAT: Playing Root Track %d/%d (%s) on Stream %d\n", index + 1, rootTrackCount, filename, streamToUse);
     }
 }
 
@@ -92,8 +120,10 @@ void action_setSparkfunVolume(uint8_t sfVol) {
     if (vol > 1.0f) vol = 1.0f;
     
     // Apply to ALL streams for global volume control effect
-    for (int i = 0; i < MAX_STREAMS; i++) {
-        streams[i].volume = vol;
+    if (streams) {
+        for (int i = 0; i < maxStreams; i++) {
+            streams[i].volume = vol;
+        }
     }
     Serial.printf("COMPAT: Volume set to %.2f\n", vol);
 }

@@ -58,7 +58,7 @@ void initBlinkies() {
     blinkies.begin();
     blinkies.setBrightness(LED_BRIGHTNESS);
     clearBlinkies();
-    // showBlinkies(); // Removed redundant call
+
 }
 
 // ===================================
@@ -152,10 +152,12 @@ void updateSyncLEDs(bool fileTransferEvent) {
 
 void updateRuntimeLEDs() {
     bool isIdle = true;
-    for (int i=0; i<MAX_STREAMS; i++) {
-        if (streams[i].active && !streams[i].stopRequested) {
-            isIdle = false;
-            break;
+    if (streams) {
+        for (int i=0; i<maxStreams; i++) {
+            if (streams[i].active && !streams[i].stopRequested) {
+                isIdle = false;
+                break;
+            }
         }
     }
 
@@ -209,11 +211,14 @@ void updateRuntimeLEDs() {
         // --- Playback Mode ---
         // Solid Colors: Blue (WAV), Green (MP3)
         for (int i=0; i<NUM_LEDS; i++) {
-            if (i < MAX_STREAMS && streams[i].active && !streams[i].stopRequested) {
-                if (streams[i].type == STREAM_TYPE_MP3_SD) {
+            if (i < maxStreams && streams && streams[i].active && !streams[i].stopRequested) {
+                if (streams[i].type == STREAM_TYPE_MP3_SD || streams[i].type == STREAM_TYPE_MP3_FLASH) {
                     setPixel(i, 0, 255, 0); // Green
+                } else if (streams[i].type == STREAM_TYPE_AAC_SD || streams[i].type == STREAM_TYPE_AAC_FLASH || 
+                           streams[i].type == STREAM_TYPE_M4A_SD || streams[i].type == STREAM_TYPE_M4A_FLASH) {
+                     setPixel(i, 255, 127, 0); // Orange
                 } else {
-                    setPixel(i, 0, 0, 255); // Blue
+                    setPixel(i, 0, 0, 255); // Blue (WAV)
                 }
             } else {
                 setPixel(i, 0, 0, 0); // Off

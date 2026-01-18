@@ -50,12 +50,14 @@ bool queueSerial2Message(const char* msg) {
 // ===================================
 bool isCpuBusy() {
     // Check if any MP3 stream has a buffer running low
-    for (int i = 0; i < MAX_STREAMS; i++) {
-        if (streams[i].active && streams[i].type == STREAM_TYPE_MP3_SD) {
-            int available = streams[i].ringBuffer->availableForRead();
-            // If buffer is less than 25% full, CPU should prioritize refilling
-            if (available < (STREAM_BUFFER_SIZE / 4)) {
-                return true; // Buffer running low, CPU is busy
+    if (streams) {
+        for (int i = 0; i < maxStreams; i++) {
+            if (streams[i].active && streams[i].type == STREAM_TYPE_MP3_SD) {
+                int available = streams[i].ringBuffer->availableForRead();
+                // If buffer is less than 25% full, CPU should prioritize refilling
+                if (available < (streamBufferSize / 4)) {
+                    return true; // Buffer running low, CPU is busy
+                }
             }
         }
     }

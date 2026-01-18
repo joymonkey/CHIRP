@@ -15,7 +15,7 @@
 #endif
 #define STREAM0_FADE_SAMPLES ((SAMPLE_RATE * STREAM0_FADE_MS) / 1000)
 
-// --- SINE LOOKUP TABLE (Optimization) ---
+// --- SINE LOOKUP TABLE ---
 // A full 256-value sine wave (0..255 corresponds to 0..360 degrees)
 // Values are signed 8-bit (-127 to 127) to save space, scaled up during mixing.
 const int8_t SINE_LUT[256] = {
@@ -54,20 +54,65 @@ volatile ChirpState chirp = {false, 0, 0, 0, 0, 0, 0};
 // ===================================
 // Global Audio Objects
 // ===================================
-AudioStream streams[MAX_STREAMS];
-RingBuffer streamBuffers[MAX_STREAMS];
-MP3DecoderHelix* mp3Decoders[MAX_MP3_DECODERS];
-bool mp3DecoderInUse[MAX_MP3_DECODERS];
+// ===================================
+// Global Audio Objects
+// ===================================
+// Configurable Globals
+int maxStreams = DEFAULT_MAX_STREAMS;
+int maxMp3Decoders = DEFAULT_MAX_STREAMS;
+int streamBufferSize = (DEFAULT_STREAM_BUFFER_KB * 1024) / 2; // Samples (16-bit) -> KB * 1024 / 2 bytes
+int streamBufferMask = 0; // Calculated in init
+
+
+// Pointers for Dynamic Allocation
+AudioStream* streams = nullptr;
+RingBuffer* streamBuffers = nullptr;
+MP3DecoderHelix** mp3Decoders = nullptr;
+bool* mp3DecoderInUse = nullptr;
 
 // Context for the callback (since library doesn't pass user data through write)
+// Context for the callback (since library doesn't pass user data through write)
 volatile int currentDecodingStream = -1;
+
+// AAC Globals
+AACDecoderHelix** aacDecoders = nullptr;
+bool* aacDecoderInUse = nullptr;
+
+#ifdef DEBUG
+// Performance Counters
+volatile uint32_t totalSdReadTime = 0;
+volatile uint32_t maxSdReadTime = 0;
+volatile uint32_t sdReadCount = 0;
+
+volatile uint32_t totalDecodeTime = 0;
+volatile uint32_t maxDecodeTime = 0;
+volatile uint32_t decodeCount = 0;
+
+volatile uint32_t bufferUnderrunCount = 0;
+#endif
 
 // ===================================
 // Initialize Audio System
 // ===================================
+// ===================================
+// Initialize Audio System
+// ===================================
 void initAudioSystem() {
+    // Calulate Mask (Must be Power of 2 - 1)
+    // NOTE: streamBufferSize is ensured to be Power of 2 by INI parser or default
+    streamBufferMask = streamBufferSize - 1;
+
+    Serial.printf("Initializing Audio System: %d Streams, Buffer %d KB (Mask: 0x%X)\n", maxStreams, (streamBufferSize * 2) / 1024, streamBufferMask);
+
+
+    // 1. Allocate Array Structures
+    streams = new AudioStream[maxStreams];
+    streamBuffers = new RingBuffer[maxStreams];
+    mp3Decoders = new MP3DecoderHelix*[maxMp3Decoders];
+    mp3DecoderInUse = new bool[maxMp3Decoders];
+
     // Initialize Streams
-    for (int i = 0; i < MAX_STREAMS; i++) {
+    for (int i = 0; i < maxStreams; i++) {
         streams[i].active = false;
         streams[i].type = STREAM_TYPE_INACTIVE;
         streams[i].volume = 1.0f;
@@ -77,25 +122,34 @@ void initAudioSystem() {
         streams[i].fileFinished = false;
         
         // Allocate Buffer in PSRAM
-        // 256K samples * 2 bytes = 512KB
-        streams[i].ringBuffer->buffer = (int16_t*)pmalloc(STREAM_BUFFER_SIZE * sizeof(int16_t));
+        // streamBufferSize samples * 2 bytes
+        streams[i].ringBuffer->buffer = (int16_t*)pmalloc(streamBufferSize * sizeof(int16_t));
         
         if (streams[i].ringBuffer->buffer) {
             // Success
             streams[i].ringBuffer->clear();
             #ifdef DEBUG
-            Serial.printf("Stream %d: Buffer allocated in PSRAM (512KB)\n", i);
+            Serial.printf("Stream %d: Buffer allocated in PSRAM (%d KB)\n", i, (streamBufferSize * 2) / 1024);
             #endif
         } else {
             // Allocation Failed!
             Serial.printf("Stream %d: ERROR - PSRAM Allocation Failed!\n", i);
         }
+        delay(10); // Prevent power spike / bus contention during burst allocation
     }
     
     // Initialize Decoder Pool Flags
-    for (int i = 0; i < MAX_MP3_DECODERS; i++) {
+    for (int i = 0; i < maxMp3Decoders; i++) {
         mp3DecoderInUse[i] = false;
-        // Note: mp3Decoders[i] are allocated in setup()
+        mp3Decoders[i] = nullptr; // Will be allocated later in setup()
+    }
+    
+    // Initialize AAC Decoder Pool Flags (using same count as MP3 for now)
+    aacDecoders = new AACDecoderHelix*[maxMp3Decoders];
+    aacDecoderInUse = new bool[maxMp3Decoders];
+    for (int i = 0; i < maxMp3Decoders; i++) {
+        aacDecoderInUse[i] = false;
+        aacDecoders[i] = nullptr; 
     }
 }
 
@@ -109,8 +163,12 @@ static inline int16_t i32_to_i16(int32_t v) { if (v > 32767) return 32767; if (v
 // This function iterates through all active streams, reads data from their
 // respective files (Flash or SD), decodes it (if MP3), and pushes it into
 // the stream's Ring Buffer.
+// the stream's Ring Buffer.
 void fillStreamBuffers() {
-    for (int i = 0; i < MAX_STREAMS; i++) {
+    // Safety check
+    if (!streams) return;
+
+    for (int i = 0; i < maxStreams; i++) {
         AudioStream* s = &streams[i];
         
         if (!s->active || s->fileFinished) continue;
@@ -123,6 +181,13 @@ void fillStreamBuffers() {
         // Check if buffer needs data
         int available = s->ringBuffer->availableForWrite();
         
+        #ifdef DEBUG
+        // Check for underruns (if active and buffer empty)
+        if (s->active && !s->fileFinished && s->ringBuffer->availableForRead() == 0) {
+            bufferUnderrunCount++;
+        }
+        #endif
+        
         if (s->type == STREAM_TYPE_MP3_SD) {
             // --- MP3 (SD) ---
             // MP3 frames can be large. Low bitrate frames can be many samples per byte.
@@ -133,7 +198,16 @@ void fillStreamBuffers() {
                 
                 mutex_enter_blocking(&sd_mutex);
                 if (s->sdFile) {
+                    #ifdef DEBUG
+                    uint32_t tStart = micros();
+                    #endif
                     bytesRead = s->sdFile.read(mp3Buf, sizeof(mp3Buf));
+                    #ifdef DEBUG
+                    uint32_t tDur = micros() - tStart;
+                    totalSdReadTime += tDur;
+                    if (tDur > maxSdReadTime) maxSdReadTime = tDur;
+                    sdReadCount++;
+                    #endif
                     if (bytesRead == 0) {
                         if (!s->sdFile.available()) {
                             s->fileFinished = true;
@@ -152,7 +226,16 @@ void fillStreamBuffers() {
                 if (bytesRead > 0 && s->decoderIndex != -1) {
                     // Set global context before writing
                     currentDecodingStream = i;
+                    #ifdef DEBUG
+                    uint32_t tStart = micros();
+                    #endif
                     mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    #ifdef DEBUG
+                    uint32_t tDur = micros() - tStart;
+                    totalDecodeTime += tDur;
+                    if (tDur > maxDecodeTime) maxDecodeTime = tDur;
+                    decodeCount++;
+                    #endif
                     currentDecodingStream = -1;
                 }
             }
@@ -185,6 +268,79 @@ void fillStreamBuffers() {
                 }
             }
 
+        } else if (s->type == STREAM_TYPE_AAC_SD) {
+            // --- AAC (SD) ---
+            if (available > 16384) {
+                uint8_t aacBuf[1024]; 
+                int bytesRead = 0;
+                
+                mutex_enter_blocking(&sd_mutex);
+                if (s->sdFile) {
+                    bytesRead = s->sdFile.read(aacBuf, sizeof(aacBuf));
+                    if (bytesRead == 0) {
+                        if (!s->sdFile.available()) {
+                             s->fileFinished = true;
+                        }
+                    }
+                }
+                mutex_exit(&sd_mutex);
+                
+                if (bytesRead > 0 && s->decoderIndex != -1) {
+                    currentDecodingStream = i;
+                    aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
+                    currentDecodingStream = -1;
+                }
+            }
+        } else if (s->type == STREAM_TYPE_AAC_FLASH) {
+            // --- AAC (Flash) ---
+            if (available > 16384) {
+                uint8_t aacBuf[512]; 
+                int bytesRead = 0;
+                
+                mutex_enter_blocking(&flash_mutex);
+                if (s->flashFile) {
+                    bytesRead = s->flashFile.read(aacBuf, sizeof(aacBuf));
+                    if (bytesRead == 0) {
+                        if (!s->flashFile.available()) {
+                            s->fileFinished = true;
+                        }
+                    }
+                }
+                mutex_exit(&flash_mutex);
+                
+                if (bytesRead > 0 && s->decoderIndex != -1) {
+                    currentDecodingStream = i;
+                    aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
+                    currentDecodingStream = -1;
+                }
+            }
+        } else if (s->type == STREAM_TYPE_M4A_SD || s->type == STREAM_TYPE_M4A_FLASH) {
+            // --- M4A (Container) ---
+            if (available > 4096) { 
+                 uint8_t m4aBuf[2048]; 
+                 
+                 // Lock appropriate mutex
+                 if (s->type == STREAM_TYPE_M4A_SD) mutex_enter_blocking(&sd_mutex);
+                 else mutex_enter_blocking(&flash_mutex);
+                 
+                 size_t bytesRead = s->mp4Parser.readNextFrame(m4aBuf, sizeof(m4aBuf));
+                 
+                 if (s->type == STREAM_TYPE_M4A_SD) mutex_exit(&sd_mutex);
+                 else mutex_exit(&flash_mutex);
+                 
+                 if (bytesRead == 0) {
+                     s->fileFinished = true;
+                     #ifdef DEBUG
+                     log_message(String("Stream ") + i + ": M4A EOF");
+                     #endif
+                 } else {
+                     if (s->decoderIndex != -1) {
+                        currentDecodingStream = i;
+                        aacDecoders[s->decoderIndex]->write(m4aBuf, bytesRead);
+                        currentDecodingStream = -1;
+                     }
+                 }
+            }
         } else if (s->type == STREAM_TYPE_WAV_SD || s->type == STREAM_TYPE_WAV_FLASH) {
             // --- WAV (SD or Flash) ---
             // WAV is simpler, we read small chunks.
@@ -283,7 +439,7 @@ void fillStreamBuffers() {
     }
 }
 
-// OPTIMIZED: Integer-only Hard Limiter (Much faster than float version)
+// Integer-only Hard Limiter
 static inline void applyFastLimiter(int32_t &l, int32_t &r) {
     if (l > 32767) l = 32767;
     else if (l < -32768) l = -32768;
@@ -300,10 +456,10 @@ namespace Mixer {
     inline void processSample() {
         int32_t mixedLeft = 0;
         int32_t mixedRight = 0;
-        bool activeAudio = false;
 
         // 1. Mix Streams
-        for (int i = 0; i < MAX_STREAMS; i++) {
+        if (streams) {
+            for (int i = 0; i < maxStreams; i++) {
             if (streams[i].active && streams[i].ringBuffer->availableForRead() >= 2) {
                 // Pop stereo samples (L, R)
                 int16_t l = streams[i].ringBuffer->pop();
@@ -328,9 +484,9 @@ namespace Mixer {
                 
                 mixedLeft += ((int32_t)l * gain) >> 8;
                 mixedRight += ((int32_t)r * gain) >> 8;
-                activeAudio = true;
             }
         }
+    }
 
         // --- CHIRP / TONE GENERATOR ---
         if (chirp.active) {
@@ -368,8 +524,7 @@ namespace Mixer {
             }
         }
 
-        // --- OPTIMIZATION: Fast Limiter ---
-        applyFastLimiter(mixedLeft, mixedRight);
+        // Fast Limiter
 
         i2s.write16(i32_to_i16(mixedLeft), i32_to_i16(mixedRight));
     }
@@ -414,7 +569,7 @@ void playChirp(int startFreq, int endFreq, int durationMs, uint8_t vol = 128) {
 void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref) {
     // Use global context since library doesn't pass user data through write() correctly
     int streamIdx = currentDecodingStream;
-    if (streamIdx < 0 || streamIdx >= MAX_STREAMS) return;
+    if (streamIdx < 0 || streamIdx >= maxStreams || !streams) return;
     
     RingBuffer* rb = streams[streamIdx].ringBuffer;
     
@@ -455,19 +610,56 @@ void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* 
                 if (!rb->push(sample)) break; // R1
                 if (!rb->push(sample)) break; // L2
                 if (!rb->push(sample)) break; // R2
+                if (!rb->push(sample)) break; // R2
              }
         }
     } else {
         // --- Normal 44.1kHz Handling ---
-        for (size_t i = 0; i < len; i++) {
-            if (channels == 1) {
-                // MONO -> STEREO (Duplicate)
-                if (!rb->push(pcm_buffer[i])) break; // Left
-                if (!rb->push(pcm_buffer[i])) break; // Right
-            } else {
-                // STEREO (Pass through)
+        if (channels == 1) {
+             // MONO -> STEREO (Duplicate)
+            for (size_t i = 0; i < len; i++) {
+                int16_t sample = pcm_buffer[i];
+                if (!rb->push(sample)) break; // Left
+                if (!rb->push(sample)) break; // Right
+            }
+        } else {
+             // STEREO (Pass through)
+            for (size_t i = 0; i < len; i++) {
                 rb->push(pcm_buffer[i]);
             }
+        }
+    }
+}
+
+// ===================================
+// AAC Decoder Callback
+// ===================================
+void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref) {
+    int streamIdx = currentDecodingStream;
+    if (streamIdx < 0 || streamIdx >= maxStreams || !streams) return;
+
+    RingBuffer* rb = streams[streamIdx].ringBuffer;
+    int channels = info.nChans;
+    
+    if (streams[streamIdx].sampleRate == 0 && info.sampRateOut != 0) {
+        streams[streamIdx].sampleRate = info.sampRateOut;
+    }
+    
+    // Basic Handling (Assuming 44.1kHz mostly, or letting I2S handle slight mismatch if not too far off)
+    // TODO: Add 22kHz support if needed, similar to MP3
+    
+    // Hoist channel check out of loop
+    if (channels == 1) {
+        // MONO -> STEREO (Duplicate)
+        for (size_t i = 0; i < len; i++) {
+            int16_t sample = pcm_buffer[i];
+            if (!rb->push(sample)) break; // Left
+            if (!rb->push(sample)) break; // Right
+        }
+    } else {
+         // STEREO (Pass through)
+        for (size_t i = 0; i < len; i++) {
+             rb->push(pcm_buffer[i]);
         }
     }
 }
@@ -509,7 +701,7 @@ void loop1() {
 // Start Stream Playback
 // ===================================
 bool startStream(int streamIdx, const char* filename) {
-    if (streamIdx < 0 || streamIdx >= MAX_STREAMS) return false;
+    if (streamIdx < 0 || streamIdx >= maxStreams || !streams) return false;
     
     // Safety: If MSC active, block SD streams
     // We check file type later, but checking here is cleaner if we know it isn't flash.
@@ -529,97 +721,107 @@ bool startStream(int streamIdx, const char* filename) {
     AudioStream* s = &streams[streamIdx];
     
     // Determine file type and location
-    // Convention: "/flash/..." is Flash, otherwise SD
-    // bool isFlash = (strncmp(filename, "/flash/", 7) == 0); // Already declared above
-    const char* ext = strrchr(filename, '.');
-    bool isMP3 = (ext && strcasecmp(ext, ".mp3") == 0);
+    // bool isFlash = (strncmp(filename, "/flash/", 7) == 0); // Declared at top of function
+    AudioFormat format = getAudioFormat(filename);
     
-    if (isFlash && isMP3) {
-         // --- MP3 from Flash ---
-        mutex_enter_blocking(&flash_mutex);
-        s->flashFile = LittleFS.open(filename, "r");
-        if (!s->flashFile) {
-            log_message(String("Stream ") + streamIdx + ": ERROR - Could not open flash file");
-            mutex_exit(&flash_mutex);
-            return false;
-        }
-
-        // --- MP3 Setup (Shared logic) ---
-        // Find free decoder
-        int decoderIdx = -1;
-        for (int i = 0; i < MAX_MP3_DECODERS; i++) {
-            if (!mp3DecoderInUse[i]) {
-                decoderIdx = i;
-                mp3DecoderInUse[i] = true;
-                break;
+    // Safety check for unknown format
+    if (format == FORMAT_UNKNOWN) {
+        log_message(String("Stream ") + streamIdx + ": ERROR - Unknown audio format: " + filename);
+        return false;
+    }
+    
+    if (isFlash) {
+        if (format == FORMAT_MP3 || format == FORMAT_AAC || format == FORMAT_M4A) {
+             // --- Compressed Audio from Flash ---
+            mutex_enter_blocking(&flash_mutex);
+            s->flashFile = LittleFS.open(filename, "r");
+            if (!s->flashFile) {
+                log_message(String("Stream ") + streamIdx + ": ERROR - Could not open flash file");
+                mutex_exit(&flash_mutex);
+                return false;
             }
-        }
-        
-        if (decoderIdx == -1) {
-            log_message(String("Stream ") + streamIdx + ": ERROR - No MP3 decoders available");
-            s->flashFile.close();
-            mutex_exit(&flash_mutex);
-            return false;
-        }
-        
-        s->decoderIndex = decoderIdx;
-        s->type = STREAM_TYPE_MP3_FLASH;
-        s->channels = 2; 
-        s->sampleRate = 0; // Unknown until first frame decoded 
-        
-        // Initialize Decoder
-        if (mp3Decoders[decoderIdx]) {
-            mp3Decoders[decoderIdx]->begin();
-        }
-        
-        mutex_exit(&flash_mutex);
-         
-    } else if (isFlash) {
-        // --- WAV from Flash ---
-        mutex_enter_blocking(&flash_mutex);
-        s->flashFile = LittleFS.open(filename, "r");
-        if (!s->flashFile) {
-            log_message(String("Stream ") + streamIdx + ": ERROR - Could not open flash file");
-            mutex_exit(&flash_mutex);
-            return false;
-        }
-        
-        // Read Header & Find Data Chunk
-        WAVHeader header;
-        s->flashFile.read((uint8_t*)&header, sizeof(WAVHeader));
-        
-        // Check for "data" chunk (basic check)
-        // If not "data", we might need to skip chunks.
-        // For now, do a simple search for "data"
-        if (strncmp(header.data, "data", 4) != 0) {
-            // Header is likely larger or has extra chunks.
-            // Reset to 12 (after RIFF/WAVE) and search
-            s->flashFile.seek(12);
+
+            // --- Decoder Setup ---
+            int decoderIdx = -1;
             
-            char chunkID[4];
-            uint32_t chunkSize;
-            
-            while (s->flashFile.available()) {
-                s->flashFile.read((uint8_t*)chunkID, 4);
-                s->flashFile.read((uint8_t*)&chunkSize, 4);
-                
-                if (strncmp(chunkID, "data", 4) == 0) {
-                    // Found data!
-                    break; 
-                } else {
-                    // Skip this chunk
-                    s->flashFile.seek(s->flashFile.position() + chunkSize);
+            if (format == FORMAT_MP3) {
+                for (int i = 0; i < maxMp3Decoders; i++) {
+                    if (!mp3DecoderInUse[i]) {
+                        decoderIdx = i;
+                        mp3DecoderInUse[i] = true;
+                        break;
+                    }
+                }
+                if (decoderIdx != -1) {
+                    s->type = STREAM_TYPE_MP3_FLASH;
+                    if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+                }
+            } else {
+                 for (int i = 0; i < maxMp3Decoders; i++) {
+                    if (!aacDecoderInUse[i]) {
+                        decoderIdx = i;
+                        aacDecoderInUse[i] = true;
+                        break;
+                    }
+                }
+                if (decoderIdx != -1) {
+                    s->type = STREAM_TYPE_AAC_FLASH;
+                    if (aacDecoders[decoderIdx]) aacDecoders[decoderIdx]->begin();
                 }
             }
+            
+            if (decoderIdx == -1) {
+                log_message(String("Stream ") + streamIdx + ": ERROR - No decoders available");
+                s->flashFile.close();
+                mutex_exit(&flash_mutex);
+                return false;
+            }
+            
+            s->decoderIndex = decoderIdx;
+            
+            s->channels = 2; 
+            s->sampleRate = 0; // Unknown until first frame decoded 
+            mutex_exit(&flash_mutex);
+             
+        } else {
+            // --- WAV from Flash ---
+            mutex_enter_blocking(&flash_mutex);
+            s->flashFile = LittleFS.open(filename, "r");
+            if (!s->flashFile) {
+                log_message(String("Stream ") + streamIdx + ": ERROR - Could not open flash file");
+                mutex_exit(&flash_mutex);
+                return false;
+            }
+            
+            // Read Header & Find Data Chunk
+            WAVHeader header;
+            s->flashFile.read((uint8_t*)&header, sizeof(WAVHeader));
+            
+            // Check for "data" chunk (basic check)
+            if (strncmp(header.data, "data", 4) != 0) {
+                s->flashFile.seek(12);
+                char chunkID[4];
+                uint32_t chunkSize;
+                
+                while (s->flashFile.available()) {
+                    s->flashFile.read((uint8_t*)chunkID, 4);
+                    s->flashFile.read((uint8_t*)&chunkSize, 4);
+                    
+                    if (strncmp(chunkID, "data", 4) == 0) {
+                        break; 
+                    } else {
+                        s->flashFile.seek(s->flashFile.position() + chunkSize);
+                    }
+                }
+            }
+            
+            s->channels = header.numChannels;
+            s->sampleRate = header.sampleRate;
+            if (s->channels < 1 || s->channels > 2) s->channels = 2; 
+            
+            s->type = STREAM_TYPE_WAV_FLASH;
+            mutex_exit(&flash_mutex);
         }
-        
-        s->channels = header.numChannels;
-        s->sampleRate = header.sampleRate;
-        if (s->channels < 1 || s->channels > 2) s->channels = 2; 
-        
-        s->type = STREAM_TYPE_WAV_FLASH;
-        mutex_exit(&flash_mutex);
-        
     } else {
         // --- SD Card File ---
         mutex_enter_blocking(&sd_mutex);
@@ -630,35 +832,71 @@ bool startStream(int streamIdx, const char* filename) {
             return false;
         }
         
-        if (isMP3) {
-            // --- MP3 Setup ---
-            // Find free decoder
+        if (format == FORMAT_MP3 || format == FORMAT_AAC || format == FORMAT_M4A) {
+            // --- Compressed Audio Setup ---
             int decoderIdx = -1;
-            for (int i = 0; i < MAX_MP3_DECODERS; i++) {
-                if (!mp3DecoderInUse[i]) {
-                    decoderIdx = i;
-                    mp3DecoderInUse[i] = true;
-                    break;
+            StreamType detectedType = STREAM_TYPE_INACTIVE;
+            
+            // Check M4A Container First
+            if (format == FORMAT_M4A) {
+                // Try to open as MP4
+                if (!s->mp4Parser.open(filename, false)) { // false = SD
+                    log_message(String("Stream ") + streamIdx + ": ERROR - Failed to parse M4A");
+                    s->sdFile.close();
+                    mutex_exit(&sd_mutex);
+                    return false;
+                }
+                detectedType = STREAM_TYPE_M4A_SD;
+            } else if (format == FORMAT_MP3) {
+                detectedType = STREAM_TYPE_MP3_SD;
+            } else {
+                detectedType = STREAM_TYPE_AAC_SD;
+            }
+            
+            // Allocate Decoder
+            if (format == FORMAT_MP3) {
+                 for (int i = 0; i < maxMp3Decoders; i++) {
+                    if (!mp3DecoderInUse[i]) {
+                        decoderIdx = i;
+                        mp3DecoderInUse[i] = true;
+                        break;
+                    }
+                }
+            } else {
+                 // AAC or M4A
+                 for (int i = 0; i < maxMp3Decoders; i++) {
+                    if (!aacDecoderInUse[i]) {
+                        decoderIdx = i;
+                        aacDecoderInUse[i] = true;
+                        break;
+                    }
                 }
             }
             
             if (decoderIdx == -1) {
-                log_message(String("Stream ") + streamIdx + ": ERROR - No MP3 decoders available");
+                log_message(String("Stream ") + streamIdx + ": ERROR - No decoders available");
+                if (detectedType == STREAM_TYPE_M4A_SD) s->mp4Parser.close();
                 s->sdFile.close();
                 mutex_exit(&sd_mutex);
                 return false;
             }
             
+            s->type = detectedType;
             s->decoderIndex = decoderIdx;
-            s->decoderIndex = decoderIdx;
-            s->type = STREAM_TYPE_MP3_SD;
-            s->channels = 2; 
-            s->sampleRate = 0; // Unknown until first frame decoded 
             
-            // Initialize Decoder
-            if (mp3Decoders[decoderIdx]) {
-                mp3Decoders[decoderIdx]->begin();
+            if (format == FORMAT_MP3) {
+                 if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+            } else {
+                 if (aacDecoders[decoderIdx]) aacDecoders[decoderIdx]->begin();
             }
+            
+            s->channels = 2; 
+            s->sampleRate = 0; 
+            if (detectedType == STREAM_TYPE_M4A_SD) {
+                s->sampleRate = s->mp4Parser.getSampleRate();
+                s->channels = s->mp4Parser.getChannels();
+            }
+ 
             
         } else {
             // --- WAV from SD ---
@@ -701,8 +939,8 @@ bool startStream(int streamIdx, const char* filename) {
     
     log_message(String("Stream ") + streamIdx + ": Playing " + filename + " (Start: " + s->startTime + "ms)");
     
-    if (isMP3) {
-        log_message(String("  Format: MP3, Rate: ") + (s->sampleRate > 0 ? String(s->sampleRate) : "Unknown") + "Hz, Ch: " + s->channels);
+    if (format == FORMAT_MP3 || format == FORMAT_AAC || format == FORMAT_M4A) {
+        log_message(String("  Format: Compressed, Rate: ") + (s->sampleRate > 0 ? String(s->sampleRate) : "Unknown") + "Hz, Ch: " + s->channels);
     } else {
         // Read details for WAV debugging
         uint16_t bits = 0;
@@ -741,7 +979,7 @@ bool startStream(int streamIdx, const char* filename) {
 // Stop Stream Playback
 // ===================================
 void stopStream(int streamIdx) {
-    if (streamIdx < 0 || streamIdx >= MAX_STREAMS) return;
+    if (streamIdx < 0 || streamIdx >= maxStreams || !streams) return;
     AudioStream* s = &streams[streamIdx];
     
     if (!s->active && s->type == STREAM_TYPE_INACTIVE) return;
@@ -749,23 +987,37 @@ void stopStream(int streamIdx) {
     s->active = false;
     
     // Release Decoder
-    if ((s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_MP3_FLASH) && s->decoderIndex != -1) {
-        if (mp3Decoders[s->decoderIndex]) {
-            mp3Decoders[s->decoderIndex]->end();
+    if (s->decoderIndex != -1) {
+        if (s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_MP3_FLASH) {
+            if (mp3Decoders[s->decoderIndex]) {
+                mp3Decoders[s->decoderIndex]->end();
+            }
+            mp3DecoderInUse[s->decoderIndex] = false;
+        } else if (s->type == STREAM_TYPE_AAC_SD || s->type == STREAM_TYPE_AAC_FLASH || 
+                   s->type == STREAM_TYPE_M4A_SD || s->type == STREAM_TYPE_M4A_FLASH) {
+            if (aacDecoders[s->decoderIndex]) {
+                aacDecoders[s->decoderIndex]->end();
+            }
+            aacDecoderInUse[s->decoderIndex] = false;
         }
-        mp3DecoderInUse[s->decoderIndex] = false;
         s->decoderIndex = -1;
     }
     
-    // Close Files
-    if (s->type == STREAM_TYPE_WAV_FLASH || s->type == STREAM_TYPE_MP3_FLASH) {
-        mutex_enter_blocking(&flash_mutex);
-        if (s->flashFile) s->flashFile.close();
-        mutex_exit(&flash_mutex);
-    } else if (s->type == STREAM_TYPE_WAV_SD || s->type == STREAM_TYPE_MP3_SD) {
-        mutex_enter_blocking(&sd_mutex);
-        if (s->sdFile) s->sdFile.close();
-        mutex_exit(&sd_mutex);
+    // Close Files / Parser
+    if (s->type == STREAM_TYPE_M4A_SD || s->type == STREAM_TYPE_M4A_FLASH) {
+         s->mp4Parser.close(); 
+         // Parser closes the file handles
+    } else {
+        // Raw Files (WAV/MP3/AAC)
+        if (s->type == STREAM_TYPE_WAV_FLASH || s->type == STREAM_TYPE_MP3_FLASH || s->type == STREAM_TYPE_AAC_FLASH) {
+            mutex_enter_blocking(&flash_mutex);
+            if (s->flashFile) s->flashFile.close();
+            mutex_exit(&flash_mutex);
+        } else if (s->type == STREAM_TYPE_WAV_SD || s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_AAC_SD) {
+            mutex_enter_blocking(&sd_mutex);
+            if (s->sdFile) s->sdFile.close();
+            mutex_exit(&sd_mutex);
+        }
     }
     
     s->type = STREAM_TYPE_INACTIVE;

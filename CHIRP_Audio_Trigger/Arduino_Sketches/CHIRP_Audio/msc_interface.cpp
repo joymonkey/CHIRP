@@ -38,9 +38,11 @@ void startMSC() {
     }
 
     // 1. Stop all SD streams
-    for (int i = 0; i < MAX_STREAMS; i++) {
-        if (streams[i].active && (streams[i].type == STREAM_TYPE_WAV_SD || streams[i].type == STREAM_TYPE_MP3_SD)) {
-            stopStream(i); // This releases SdFat file handles
+    if (streams) {
+        for (int i = 0; i < maxStreams; i++) {
+            if (streams[i].active && (streams[i].type == STREAM_TYPE_WAV_SD || streams[i].type == STREAM_TYPE_MP3_SD)) {
+                stopStream(i); // This releases SdFat file handles
+            }
         }
     }
     

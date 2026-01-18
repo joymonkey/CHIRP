@@ -79,6 +79,55 @@ bool parseIniFile() {
                         useFlashForBank1 = (val == 1);
                     }
                 }
+                // Check MAX_STREAMS
+                else if (strncasecmp(command, "MAX_STREAMS", 11) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        int val = atoi(value);
+                        if (val >= 1 && val <= 10) { // Safety limits
+                            maxStreams = val;
+                            maxMp3Decoders = val; // Scale decoders with streams for now
+                        }
+                    }
+                }
+                // Check STREAM_BUFFER_SIZE (KB)
+                else if (strncasecmp(command, "STREAM_BUFFER_SIZE", 18) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        
+                        int val = 0;
+                        if (strncasecmp(value, "SMALL", 5) == 0) val = 128;
+                        else if (strncasecmp(value, "MEDIUM", 6) == 0) val = 256;
+                        else if (strncasecmp(value, "LARGE", 5) == 0) val = 512;
+                        else val = atoi(value);
+                        
+                        if (val > 0) {
+                            // Round DOWN to nearest power of 2
+                            // Algorithm: Find MSB
+                            if (val > 4096) val = 4096; // Cap at 4MB
+                            
+                            // Simple loop to find largest power of 2 <= val
+                            int p2 = 32; // Minimum 32KB
+                            while ((p2 * 2) <= val) {
+                                p2 *= 2;
+                            }
+                            val = p2;
+                            
+                            streamBufferSize = (val * 1024) / 2; // Convert KB to int16 samples
+                        }
+                    }
+                }
+                // Check LEGACY_MONOPHONIC
+                else if (strncasecmp(command, "LEGACY_MONOPHONIC", 17) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' '); // Find first char of value
+                        int val = atoi(value);
+                        legacyMonophonic = (val == 1);
+                    }
+                }
             }
         }
         iniFile.close();
@@ -108,24 +157,7 @@ bool parseIniFile() {
 // Write CHIRP.INI File
 // ===================================
 void writeIniFile() {
-    // PRECONDITION: mutex_enter_blocking(&sd_mutex) should be called by caller if strictly needed,
-    // BUT since we are opening 'w' which might take time, and this is system config, 
-    // we should handle mutex here OR assume caller handles it.
-    // parseIniFile already holds the mutex when calling this!
-    // However, other callers (button press) won't have it yet.
-    // Recursive mutexes aren't standard here, so we must be careful.
-    // Let's assume callers MUST NOT hold the mutex, and we take it here.
-    // BUT parseIniFile DOES hold it. 
-    // FIX: Refactor parseIniFile to release before calling, or duplicate logic?
-    // EASIER: Create `writeIniFileInternal` or just put the logic here and be careful.
-    // Let's make writeIniFile independent and fix parseIniFile to release first?
-    // parseIniFile has logic: (!foundPage || versionMismatch) -> rewrite.
-    // It's safer to just duplicate the write logic inside parseIniFile for now (it was already there),
-    // OR release mutex, call writeIniFile, then return.
-    
-    // Let's implement writeIniFile as a standalone function that TAKES the mutex.
-    // And in parseIniFile, we will release mutex before calling it.
-    
+    // This function obtains the SD mutex exclusively. Callers must NOT hold the mutex.
     mutex_enter_blocking(&sd_mutex);
     FsFile iniFile = sd.open("CHIRP.INI", FILE_WRITE | O_TRUNC);
     if (iniFile) {
@@ -134,6 +166,13 @@ void writeIniFile() {
         iniFile.printf("#BANK1_PAGE %c\n", activeBank1Page); 
         iniFile.printf("#USE_FLASH_BANK1 %d\n", useFlashForBank1 ? 1 : 0);
         iniFile.printf("#BAUD_RATE %ld\n", baudRate);
+        iniFile.printf("#MAX_STREAMS %d\n", maxStreams);
+        int bufKB = (streamBufferSize * 2) / 1024;
+        if (bufKB == 128) iniFile.printf("#STREAM_BUFFER_SIZE SMALL\n");
+        else if (bufKB == 256) iniFile.printf("#STREAM_BUFFER_SIZE MEDIUM\n");
+        else if (bufKB == 512) iniFile.printf("#STREAM_BUFFER_SIZE LARGE\n");
+        else iniFile.printf("#STREAM_BUFFER_SIZE %d\n", bufKB);
+        iniFile.printf("#LEGACY_MONOPHONIC %d\n", legacyMonophonic ? 1 : 0);
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
         iniFile.println("# Do not edit this manually unless you want to force voice feedback.");
@@ -150,8 +189,30 @@ void writeIniFile() {
 
 
 
+
 // ===================================
-// Scan Valid Bank 1 Pages (Run at startup)
+// Audio Format Helpers
+// ===================================
+AudioFormat getAudioFormat(const char* filename) {
+    const char* ext = strrchr(filename, '.');
+    if (!ext) return FORMAT_UNKNOWN;
+    
+    if (strcasecmp(ext, ".wav") == 0) return FORMAT_WAV;
+    if (strcasecmp(ext, ".mp3") == 0) return FORMAT_MP3;
+    if (strcasecmp(ext, ".aac") == 0) return FORMAT_AAC;
+    if (strcasecmp(ext, ".m4a") == 0) return FORMAT_M4A;
+    if (strcasecmp(ext, ".ogg") == 0) return FORMAT_OGG;
+    
+    return FORMAT_UNKNOWN;
+}
+
+bool isAudioFile(const char* filename) {
+    return getAudioFormat(filename) != FORMAT_UNKNOWN;
+}
+
+
+// ===================================
+// Scan Valid Bank 1 Pages
 // ===================================
 void scanValidBank1Pages() {
     validBank1PageCount = 0;
@@ -213,7 +274,7 @@ void scanValidBank1Pages() {
 
 
 // ===================================
-// Scan Bank 1 (Finds dir matching activeBank1Page)
+// Scan Bank 1
 // ===================================
 void scanBank1() {
     bank1SoundCount = 0;
@@ -247,8 +308,7 @@ void scanBank1() {
                 char filename[64];
                 file.getName(filename, sizeof(filename));
                 if (!file.isDirectory()) {
-                    const char* ext = strrchr(filename, '.');
-                    if (ext && (strcasecmp(ext, ".wav") == 0 || strcasecmp(ext, ".mp3") == 0)) {
+                    if (isAudioFile(filename)) {
                         char* underscore = strchr(filename, '_');
                         if (underscore && isdigit(*(underscore + 1))) {
                             char basename[16];
@@ -461,13 +521,7 @@ void playBankNameFeedback(char page) {
 
 
 
-// ===================================
-// Sync Bank 1 to Flash
-// ===================================
 
-// ===================================
-// Sync Bank 1 to Flash
-// ===================================
 // ===================================
 // Play Firmware Update Feedback
 // ===================================
@@ -600,7 +654,7 @@ bool syncBank1ToFlash() {
     Serial.println();
     
     // --- Voice Feedback: Start ---
-    /* Moved to playFirmwareUpdateFeedback() */
+
 
     // --- Count Actual Files to Sync ---
     int filesToSync = 0;
@@ -765,7 +819,7 @@ bool syncBank1ToFlash() {
                             filesSyncedSoFar++;
                             justCopied = true;
                             
-                            // Success Feedback moved outside mutex to avoid deadlock
+                            // Success Feedback is outside mutex to avoid deadlock
                         }
                     } else {
                         Serial.println(" FAILED to create flash file!");
@@ -877,11 +931,7 @@ void scanSDBanks() {
                                 char filename[64];
                                 file.getName(filename, sizeof(filename));
                                 
-                                const char* ext = strrchr(filename, '.');
-                                if (ext && (strcasecmp(ext, ".wav") == 0 ||
-                                           strcasecmp(ext, ".mp3") == 0 ||
-                                           strcasecmp(ext, ".aac") == 0 ||
-                                           strcasecmp(ext, ".m4a") == 0)) {
+                                if (isAudioFile(filename)) {
                                     strncpy(bank->files[bank->fileCount], filename,
                                             sizeof(bank->files[0]) - 1);
                                     bank->fileCount++;
@@ -951,11 +1001,7 @@ void scanRootTracks() {
             file.getName(filename, sizeof(filename));
                        
             // index all valid audio files in SD root
-            const char* ext = strrchr(filename, '.');
-            if (ext && (strcasecmp(ext, ".wav") == 0 ||
-                       strcasecmp(ext, ".mp3") == 0 ||
-                       strcasecmp(ext, ".aac") == 0 ||
-                       strcasecmp(ext, ".m4a") == 0)) {
+            if (isAudioFile(filename)) {
                 
                 if (rootTrackCount < MAX_ROOT_TRACKS) {
                     strncpy(rootTracks[rootTrackCount], filename, sizeof(rootTracks[0]) - 1);

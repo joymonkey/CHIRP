@@ -3,13 +3,14 @@
  * 
  * Multi-stream audio playback engine for RP2350.
  * 
- * - 3 Independent Audio Streams (WAV or MP3)
+ * - 3+ Independent Audio Streams (WAV, MP3 or AAC)
  * - Supports new CHIRP serial commands and legacy MP3 Trigger commands
- * - Dual MP3 Decoders (Helix) running on Core 0
- * - Ring Buffers in PSRAM (512KB per stream) for glitch-free playback
+ * - Multiple MP3 and AAC Decoders (Helix) running on Core 0
+ * - Ring Buffers in PSRAM (default 512KB per stream) for glitch-free playback
+ * - MP3 and AAC decoders also in PSRAM (~25KB per MP3 decoder and ~70KB per AAC decoder)
  * - Automatic mixing on Core 1
  * - Dynamic resource allocation for decoders
- * - Robust WAV/MP3 file handling with auto-stop
+ * - Robust WAV/MP3/AAC file handling with auto-stop
  * - Sound file manifest handling (so your droid knows what sounds are available)
  *
  * File Format Notes:
@@ -19,6 +20,7 @@
  * with the CHIRP Audio Trigger. It will play 48kHz, but then will be slowed ~92% and not
  * sound good.
  * To keep filesizes down, it's recommended to use mono WAV files. Stereo MP3's are fine.
+ * AAC files should be raw .aac files or AAC-LC in an .m4a or .mp4 containers.
  *
  * SD Card Structure for Droid Use:
  * Files can be stored similarly to Padawan/MP3 Trigger, but to take full advantage
@@ -26,10 +28,9 @@
  * droid operators to easily update sounds on the droid by re-arranging the SD card,
  * without a need to adjust any code.
  * The system supports up to 6 sound banks, each can have numerous "pages" of sounds.
- * Sound Bank 1 is for the droids primary vocals. These can be WAV or MP3 files, and total
- * no more than 14MB. Files starting with similar characters but ending with consecutive
- * numbers will be considered as a sound variant group, and when triggered a single variant
- * will be randomly chosen from the group.
+ * Sound Bank 1 is for the droids primary vocals. Sound Bank 1 Files starting with similar
+ * characters but ending with consecutive  * numbers will be considered as a sound variant
+ * group, and when triggered a single variant will be randomly chosen from the group.
  * For example these 6 files are considered to be only 3 sounds...
  *   SD:/1A_R2D2/beep_01.wav
  *   SD:/1A_R2D2/beep_02.wav
@@ -37,10 +38,8 @@
  *   SD:/1A_R2D2/disagree.wav
  *   SD:/1A_R2D2/happy_01.wav
  *   SD:/1A_R2D2/happy_02.wav
- * Sound Bank 1 files are transfered from the SD card to flash memory at startup, allowing
+ * Sound Bank 1 files can be synced from the SD card to flash memory at startup, allowing
  * these sounds to always be available with minimal system overhead needed.
- * Sound Banks 2-6 have looser rules. Files can still be grouped by ending similar sounds 
- * with variant numbers, but the files can be MP3 or WAV format and of any filesize.
  * Different pages of sounds are defined by the letter in the folder name following the
  * Sound Bank number. File names should be kept short as possible while keeping them
  * identifiable to the user. For example...
@@ -62,6 +61,7 @@
  * LIST : Get a list of Sound Banks and Pages
  * GNME : Get Name of a sound in a provided sound bank and page
  * STAT : display the Status of each stream
+ * MUSB : MSC USB mode (SD card contents will be accessible via USB)
  *
  * Legacy MP3 Trigger Serial Commands:
  * T : Trigger by sound file number (ASCII)
@@ -72,6 +72,29 @@
  * F : Play next track in the SD card root
  * R : Play previous track in the SD card root
  *
+ * PSRAM Note:
+ * The system can be configured for more streams and larger buffers than PSRAM will allow, so be conservative.
+ * Each stream will require a big chunk of PSRAM for its buffer, a little for an MP3 decoder and a little more for an AAC decoder.
+ * The RevA CHIRP Audio Trigger board has only 2MB of PSRAM; this will allow 3 streams with 512KB buffers 3*(512+25+70)
+ * The RevB board has 8MB of PSRAM, which will allow up to 13 streams with 512KB buffers (more than the CPU can handle)
+ * If you're playing around with lots of streams, be sure to reduce your buffer size to accomodate the PSRAM your board has.
+ * 
+ * CHIRP.INI:
+ * The CHIRP.INI file allows you to configure various aspects of the CHIRP Audio Trigger firmware.
+ * It is stored in the root of the SD card.
+ * #BANK1_PAGE [A-Z, Default: A]
+ *   Selects the active sub-bank (page) for Bank 1 (Flash Bank).
+ * #BAUD_RATE [2400, 9600, 19200, 38400, 57600 or 115200, Default: 115200]
+ *   Sets the baud rate for the serial control interface.
+ * #USE_FLASH_BANK1 [0 or 1, Default: 1]
+ *   Enables/disables use of onboard flash memory for Bank 1 sounds. Setting to 0 may save startup time if not needed.
+ * #LEGACY_MONOPHONIC [0 or 1, Default: 1]
+ *   Controls behavior of the legacy T command. 0 = Polyphonic (sounds mix). 1 = Monophonic (stop & play).
+ * #MAX_STREAMS [1-10, Default: 3]
+ *   Maximum number of simultaneous audio streams. Increasing this uses more RAM/CPU.
+ * #STREAM_BUFFER_SIZE [SMALL, MEDIUM, LARGE or custom number. Default: LARGE (512KB)]
+ *   Size of the audio buffer per stream. Use MEDIUM or LARGE for high-bitrate files if you experience stuttering.
+ * 
  */
 
 #include "config.h"
@@ -82,10 +105,7 @@ volatile bool g_allowAudio = false; // Start muted (for startup sync)
 bool useFlashForBank1 = false; // Default to SD unless enabled in INI
 
 
-// ===================================
-// NEW FUNCTION: Calculate Checksum
-// ===================================
-/*void calculateGlobalChecksum() {
+void calculateGlobalChecksum() {
     Serial.print("Calculating filename checksum... ");
     CRC32 crc;
 
@@ -105,11 +125,24 @@ bool useFlashForBank1 = false; // Default to SD unless enabled in INI
 
     globalFilenameChecksum = crc.finalize();
     Serial.println(globalFilenameChecksum);
-}*/
+}
 
 // ===================================
 // SETUP (Core 0)
 // ===================================
+#ifdef DEBUG
+// Performance Stats (from audio_playback.cpp)
+extern volatile uint32_t totalSdReadTime;
+extern volatile uint32_t maxSdReadTime;
+extern volatile uint32_t sdReadCount;
+
+extern volatile uint32_t totalDecodeTime;
+extern volatile uint32_t maxDecodeTime;
+extern volatile uint32_t decodeCount;
+
+extern volatile uint32_t bufferUnderrunCount;
+#endif
+
 void setup() {
     // 1. Safe State for SD Card (Deselect)
     pinMode(SD_CS, OUTPUT);
@@ -133,8 +166,6 @@ void setup() {
     Serial2.setRX(UART_RX);
     Serial2.begin(baudRate);
     
-    //delay(500); // Short delay for Serial to wake up
-
     // 6. Initialize SPI Pins
     SPI1.setRX(SD_MISO);
     SPI1.setTX(SD_MOSI);
@@ -146,6 +177,21 @@ void setup() {
     Serial.println("╚═══════════════════════════════════════╝");
     Serial.println();
     Serial.printf("PSRAM: %d KB free\n\n", rp2040.getFreePSRAMHeap() / 1024);
+
+
+
+#ifdef DEBUG
+// Performance Stats (from audio_playback.cpp)
+extern volatile uint32_t totalSdReadTime;
+extern volatile uint32_t maxSdReadTime;
+extern volatile uint32_t sdReadCount;
+
+extern volatile uint32_t totalDecodeTime;
+extern volatile uint32_t maxDecodeTime;
+extern volatile uint32_t decodeCount;
+
+extern volatile uint32_t bufferUnderrunCount;
+#endif
     
     // Buttons
     pinMode(PIN_BTN_NAV, INPUT_PULLUP);
@@ -155,25 +201,14 @@ void setup() {
     // Initialize MSC Hardware (Pin)
     setupMSC();
 
-    // Initialize Audio System (Streams, Buffers, Flags)
-    initAudioSystem();
-    Serial.println("Audio System Initialized (MAX_STREAMS Streams, MAX_MP3_DECODERS MP3 Decoders)");
+
+
     
     // Initialize Serial2 Message Queue
     initSerial2Queue();
     Serial.println("Serial2 Message Queue Initialized");
 
-    // Allocate MP3 decoders in PSRAM
-    Serial.print("Allocating MP3 decoders in PSRAM... ");
-    for (int i = 0; i < MAX_MP3_DECODERS; i++) {
-        mp3Decoders[i] = new (pmalloc(sizeof(MP3DecoderHelix))) MP3DecoderHelix(mp3DataCallback);
-        if (!mp3Decoders[i]) {
-            Serial.printf("Decoder %d FAILED! ", i);
-        } else {
-            Serial.printf("Decoder %d OK. ", i);
-        }
-    }
-    Serial.println();
+
     
     // Initialize SD Card
     Serial.print("\nInitializing SD Card... ");
@@ -224,7 +259,38 @@ void setup() {
                   fwUpdated ? "TRUE" : "FALSE", activeBank1Page, useFlashForBank1);
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
 
-    // NEW: Scan for Valid Bank 1 Pages (for button logic)
+    // Initialize Audio System
+    initAudioSystem(); // Uses maxStreams set by parseIniFile
+
+    // Allocate MP3 decoders in PSRAM (Dynamic)
+    Serial.print("Allocating MP3 decoders in PSRAM... ");
+    for (int i = 0; i < maxMp3Decoders; i++) {
+        mp3Decoders[i] = new (pmalloc(sizeof(MP3DecoderHelix))) MP3DecoderHelix(mp3DataCallback);
+        if (!mp3Decoders[i]) {
+            Serial.printf("Decoder %d FAILED! ", i);
+        } else {
+            Serial.printf("Decoder %d OK. ", i);
+        }
+    }
+    Serial.println();
+
+    // Allocate AAC decoders in PSRAM (Dynamic)
+    Serial.print("Allocating AAC decoders in PSRAM... ");
+    for (int i = 0; i < maxMp3Decoders; i++) {
+        // Small delay to prevent rush/power spikes
+        delay(10); 
+        aacDecoders[i] = new (pmalloc(sizeof(AACDecoderHelix))) AACDecoderHelix(aacDataCallback);
+        if (!aacDecoders[i]) {
+            Serial.printf("AAC Decoder %d FAILED! ", i);
+        } else {
+            Serial.printf("AAC Decoder %d OK. ", i);
+        }
+    }
+    Serial.println();
+    delay(50); // Settlement delay
+
+
+    // Scan for Valid Bank 1 Pages
     Serial.println("\n=== Scanning Valid Bank 1 Pages ===");
     scanValidBank1Pages();
                   
@@ -233,7 +299,7 @@ void setup() {
     scanBank1();
     Serial.printf("Found %d sounds in Bank 1\n", bank1SoundCount);
     
-    // NEW: Play Firmware Update Feedback (regardless of sync setting)
+    // Play Firmware Update Feedback
     playFirmwareUpdateFeedback(fwUpdated);
 
     // Sync Bank 1 to Flash
@@ -443,22 +509,47 @@ void loop() {
     static uint32_t lastDebugTime = 0;
     if (millis() - lastDebugTime > 1000) {
         lastDebugTime = millis();
-        for (int i = 0; i < MAX_STREAMS; i++) {
-            if (streams[i].active) {
-                int avail = streams[i].ringBuffer->availableForWrite();
-                int used = STREAM_BUFFER_SIZE - 1 - avail;
-                Serial.printf("STRM:%d Used:%d/%d (%.1f%%) R:%d W:%d\n", 
-                    i, used, STREAM_BUFFER_SIZE, (float)used*100.0/STREAM_BUFFER_SIZE,
-                    streams[i].ringBuffer->readPos, streams[i].ringBuffer->writePos);
+        
+        // Print Performance Stats
+        if (sdReadCount > 0 || decodeCount > 0) {
+            uint32_t avgSd = sdReadCount > 0 ? totalSdReadTime / sdReadCount : 0;
+            uint32_t avgDec = decodeCount > 0 ? totalDecodeTime / decodeCount : 0;
+            
+            Serial.printf("PERF: SD Avg:%d us Max:%d us (%d) | DEC Avg:%d us Max:%d us (%d) | Under:%d\n",
+                avgSd, maxSdReadTime, sdReadCount,
+                avgDec, maxDecodeTime, decodeCount,
+                bufferUnderrunCount);
+                
+            // Reset
+            totalSdReadTime = 0;
+            maxSdReadTime = 0;
+            sdReadCount = 0;
+            totalDecodeTime = 0;
+            maxDecodeTime = 0;
+            decodeCount = 0;
+            // Don't reset underrun count immediately so we can see it accumulate? 
+            // Actually, per-second rate is better.
+            bufferUnderrunCount = 0;
+        }
+
+        if (streams) {
+            for (int i = 0; i < maxStreams; i++) {
+                if (streams[i].active) {
+                    int avail = streams[i].ringBuffer->availableForWrite();
+                    int used = streamBufferSize - 1 - avail;
+                    Serial.printf("STRM:%d Used:%d/%d (%.1f%%) R:%d W:%d\n", 
+                        i, used, streamBufferSize, (float)used*100.0/streamBufferSize,
+                        streams[i].ringBuffer->readPos, streams[i].ringBuffer->writePos);
+                }
             }
         }
     }
     #endif
     
     // Check for stop requests (auto-stop)
-    for (int i = 0; i < MAX_STREAMS; i++) {
+    for (int i = 0; i < maxStreams; i++) {
         // 1. Explicit stop request
-        if (streams[i].stopRequested) {
+        if (streams && streams[i].stopRequested) {
             stopStream(i);
             streams[i].stopRequested = false;
         }
