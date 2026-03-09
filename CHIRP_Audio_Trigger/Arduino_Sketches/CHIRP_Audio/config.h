@@ -14,7 +14,7 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20260117"
+#define VERSION_STRING "20260308"
 //#define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
@@ -22,6 +22,15 @@ using namespace libhelix;
 #define SD_MISO 12
 #define SD_MOSI 15
 #define SD_SCK  14
+// Board Revision Selection
+#define BOARD_REV_B // Uncomment for Rev.B boards (optimized for new hardware)
+
+#ifdef BOARD_REV_B
+  #define I2S_MUTE_PIN 8 // Rev.B PCB: Pin 8 is Mute. (PSRAM CS is Pin 0)
+#endif
+// Rev.A PCB notes: Pin 8 is PSRAM CS, so I2S_MUTE_PIN must NOT be defined as 8 if we're compiling for a Rev.A board.
+
+#define MUTE_DURING_SYNC // Enable muting during SD->Flash sync (Hardware Mute on Rev.B, Software Mute on Rev.A)
 #define I2S_BCLK 9
 #define I2S_LRCK 10
 #define I2S_DATA 11
@@ -182,6 +191,7 @@ enum StreamType {
     STREAM_TYPE_WAV_SD,
     STREAM_TYPE_MP3_SD,
     STREAM_TYPE_MP3_FLASH,
+    STREAM_TYPE_MP3_PROGMEM,
     STREAM_TYPE_AAC_SD,
     STREAM_TYPE_AAC_FLASH,
     STREAM_TYPE_M4A_SD,
@@ -201,24 +211,25 @@ struct RingBuffer {
     int16_t* buffer; // Pointer to PSRAM
     volatile int readPos;
     volatile int writePos;
+    int bufferMask;
     
     // Helper to get available write space
     int availableForWrite() {
         if (!buffer) return 0;
-        int currentLevel = (writePos - readPos + streamBufferSize) & streamBufferMask;
-        return (streamBufferSize - 1) - currentLevel;
+        int currentLevel = (writePos - readPos + (bufferMask + 1)) & bufferMask;
+        return bufferMask - currentLevel;
     }
     
     // Helper to get available samples to read
     int availableForRead() {
         if (!buffer) return 0;
-        return (writePos - readPos + streamBufferSize) & streamBufferMask;
+        return (writePos - readPos + (bufferMask + 1)) & bufferMask;
     }
     
     bool push(int16_t sample) {
         if (!buffer) return false;
         
-        int nextWrite = (writePos + 1) & streamBufferMask;
+        int nextWrite = (writePos + 1) & bufferMask;
         if (nextWrite == readPos) {
             // Buffer Full - Drop sample
             return false;
@@ -232,7 +243,7 @@ struct RingBuffer {
     int16_t pop() {
         if (!buffer) return 0;
         int16_t sample = buffer[readPos];
-        readPos = (readPos + 1) & streamBufferMask;
+        readPos = (readPos + 1) & bufferMask;
         return sample;
     }
     
@@ -323,6 +334,11 @@ struct AudioStream {
     // MP4 Parser
     MP4Parser mp4Parser;
     
+    // PROGMEM Data Variables
+    const uint8_t* progmemData;
+    size_t progmemSize;
+    size_t progmemPos;
+    
     // Buffer
     RingBuffer* ringBuffer;
     
@@ -353,6 +369,7 @@ void processSerialCommands(Stream &serial); // Dual-buffer fix
 // from file_management.cpp
 bool parseIniFile();
 void writeIniFile();
+bool checkFirmwareVersionLittleFS();
 void scanValidBank1Pages();
 void scanBank1();
 bool syncBank1ToFlash();
@@ -365,6 +382,9 @@ const char* getSDFile(uint8_t bank, char page, int index);
 void playVoiceFeedback(const char* filename); // Exposed for other files
 void playVoiceNumber(int number); // Exposed for other files
 void playBaudFeedback(long rate); // Helper for baud rate feedback
+void playPageFeedback(char page); // Helper for page feedback
+void playUSBFeedback(bool enabled); // Helper for USB mode
+void playCCRCFeedback(); // Helper for CCRC reset
 void playBankNameFeedback(char page); // Helper for Bank Name feedback
 AudioFormat getAudioFormat(const char* filename); // Helper to get format from extension
 bool isAudioFile(const char* filename); // Helper to check if file is supported
@@ -373,6 +393,7 @@ bool isAudioFile(const char* filename); // Helper to check if file is supported
 void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref);
 void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref);
 bool startStream(int streamIdx, const char* filename);
+bool startProgmemStream(int streamIdx, const uint8_t* data, size_t size);
 void stopStream(int streamIdx);
 void fillStreamBuffers(); // Main loop task
 void initAudioSystem();

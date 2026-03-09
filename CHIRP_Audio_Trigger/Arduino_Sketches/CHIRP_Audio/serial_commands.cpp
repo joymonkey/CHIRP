@@ -355,6 +355,8 @@ void handleCcrc(Stream &serial) {
     serial.printf("Deleted %d files from /flash.\n", count);
     serial.println("Please REBOOT the board to re-sync files.");
     sendSerialResponse(serial, "PACK:CCRC");
+    
+    playCCRCFeedback();
 }
 
 void handleStat(Stream &serial, char* args) {
@@ -381,6 +383,8 @@ void handleBaud(Stream &serial, char* args) {
         sendSerialResponse(serial, "PACK:BAUD");
         sendSerialResponseF(serial, "BAUD:%ld", baudRate);
         
+        playBaudFeedback(baudRate);
+        
         Serial2.end();
         Serial2.begin(baudRate);
     } else {
@@ -398,6 +402,8 @@ void handleBpage(Stream &serial, char* args) {
         sendSerialResponse(serial, "PACK:BPAGE");
         sendSerialResponseF(serial, "BPAGE:%c", activeBank1Page);
         serial.println("Note: Reboot required to reload Bank 1.");
+        
+        playPageFeedback(activeBank1Page);
     } else {
         serial.println("ERR:PARAM - Invalid page (A-Z)");
     }
@@ -408,10 +414,12 @@ void handleMusb(Stream &serial, char* args) {
     if (args[0] == ':') {
         int val = atoi(args + 1);
         if (val == 1) {
+            playUSBFeedback(true);
             startMSC();
             sendSerialResponse(serial, "PACK:MUSB");
             sendSerialResponse(serial, "MUSB:1");
         } else {
+            playUSBFeedback(false);
             stopMSC();
             sendSerialResponse(serial, "PACK:MUSB");
             sendSerialResponse(serial, "MUSB:0");
@@ -419,15 +427,27 @@ void handleMusb(Stream &serial, char* args) {
     } else {
         // Toggle
         if (g_mscActive) {
+            playUSBFeedback(false);
             stopMSC();
             sendSerialResponse(serial, "PACK:MUSB");
             sendSerialResponse(serial, "MUSB:0");
         } else {
+            playUSBFeedback(true);
             startMSC();
             sendSerialResponse(serial, "PACK:MUSB");
             sendSerialResponse(serial, "MUSB:1");
         }
     }
+}
+
+void handlePvoice(Stream &serial, char* args) {
+    if (args[0] == '\0') {
+        serial.println("ERR:PARAM - Format: PVOICE:filename");
+        return;
+    }
+    // Attempt play (It silently exits if voice file isn't found)
+    playVoiceFeedback(args);
+    sendSerialResponse(serial, "PACK:PVOICE");
 }
 
 // ===================================
@@ -511,6 +531,9 @@ void processSerialCommands(Stream &serial) {
                 }
                 else if (strncmp(cmdBuffer, "MUSB", 4) == 0) {
                     handleMusb(serial, cmdBuffer + 4); // Handles :1, :0 or empty (toggle)
+                }
+                else if (strncmp(cmdBuffer, "PVOICE:", 7) == 0) {
+                    handlePvoice(serial, cmdBuffer + 7);
                 }
                 else {
                     serial.println("ERR:UNKNOWN");

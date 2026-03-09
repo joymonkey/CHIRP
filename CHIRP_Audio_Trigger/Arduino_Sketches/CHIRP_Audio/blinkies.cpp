@@ -81,29 +81,37 @@ void playStartupSequence() {
 // ===================================
 void playErrorSequence() {
     g_allowAudio = true; // Ensure audio is enabled for chirps
-    int count = 0;
+    
+    // Red Light
+    for(int i=0; i<NUM_LEDS; i++) {
+        blinkies.setPixelColor(i, blinkies.Color(255, 0, 0));
+    }
+    blinkies.show();
+        
+    // Chirp 3 times
+    for (int count = 0; count < 3; count++) {
+        playChirp(1000, 750, 750, 100);
+        delay(750);
+    }
+    
+    // Voice Feedback (play once)
+    playVoiceFeedback("sd_card");
+    playVoiceFeedback("not");
+    playVoiceFeedback("detected");
+    
+    // Now just flash LEDs red forever (no repeating audio)
     while(true) {
-        // Red
         for(int i=0; i<NUM_LEDS; i++) {
             blinkies.setPixelColor(i, blinkies.Color(255, 0, 0));
         }
-        blinkies.show(); // Force show
+        blinkies.show();
+        delay(500);
         
-        // Chirp first 3 times
-        if (count < 3) {
-            playChirp(1000, 750, 750, 100);
-        }
-        
-        delay(750);
-        
-        // Off
         for(int i=0; i<NUM_LEDS; i++) {
             blinkies.setPixelColor(i, 0);
         }
-        blinkies.show(); // Force show
-        
-        delay(750);
-        count++;
+        blinkies.show();
+        delay(500);
     }
 }
 

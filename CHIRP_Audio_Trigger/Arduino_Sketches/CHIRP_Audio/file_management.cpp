@@ -133,21 +133,50 @@ bool parseIniFile() {
         iniFile.close();
     }
 
-    if (foundVersion) {
-         if (strcmp(storedVersion, VERSION_STRING) != 0) {
-            versionMismatch = true;
-            Serial.printf("Firmware update detected! Old: %s, New: %s\n", storedVersion, VERSION_STRING);
-         }
-    } else {
-        versionMismatch = true; // No version found, treat as update/initial
-        Serial.println("No firmware version in INI. Adding it.");
-    }
-
-    // Rewrite INI if needed (missing Page, missing Version, or Version Mismatch)
+    // Rewrite INI if needed (missing Page)
     mutex_exit(&sd_mutex); // Release mutex before calling writeIniFile which takes it again
     
-    if (!foundPage || versionMismatch) {
+    if (!foundPage) {
         writeIniFile();
+    }
+    
+    return false; // We now use LittleFS for firmware version tracking
+}
+
+// ===================================
+// Check Firmware Version (LittleFS)
+// ===================================
+bool checkFirmwareVersionLittleFS() {
+    bool versionMismatch = false;
+    char storedVersion[32] = {0};
+    
+    // Check if version file exists
+    if (LittleFS.exists("/version.txt")) {
+        File verFile = LittleFS.open("/version.txt", "r");
+        if (verFile) {
+            String line = verFile.readStringUntil('\n');
+            line.trim();
+            line.toCharArray(storedVersion, sizeof(storedVersion)-1);
+            verFile.close();
+            
+            if (strcmp(storedVersion, VERSION_STRING) != 0) {
+                versionMismatch = true;
+                Serial.printf("Firmware update detected via LittleFS! Old: %s, New: %s\n", storedVersion, VERSION_STRING);
+            }
+        }
+    } else {
+        // No version file found (First boot / Flash erased)
+        versionMismatch = true;
+        Serial.printf("No firmware version found in LittleFS. Setting to %s\n", VERSION_STRING);
+    }
+    
+    // Write new version if mismatched
+    if (versionMismatch) {
+        File verFile = LittleFS.open("/version.txt", "w");
+        if (verFile) {
+            verFile.println(VERSION_STRING);
+            verFile.close();
+        }
     }
     
     return versionMismatch;
@@ -382,23 +411,45 @@ void scanBank1() {
 // ===================================
 // Voice Feedback Helper
 // ===================================
+#include "system_audio_data.h"
+
 void playVoiceFeedback(const char* filename) {
-    char fullPath[64];
-    snprintf(fullPath, sizeof(fullPath), "/0_System/%s", filename);
+    // 1. Strip the extension ".wav" or ".mp3" from the requested filename
+    char basename[32];
+    strncpy(basename, filename, sizeof(basename) - 1);
+    basename[sizeof(basename) - 1] = '\0';
     
-    // Check if file exists first
-    bool exists = false;
-    mutex_enter_blocking(&sd_mutex);
-    if (sd.exists(fullPath)) exists = true;
-    mutex_exit(&sd_mutex);
+    char* dot = strrchr(basename, '.');
+    if (dot) {
+        *dot = '\0';
+    }
     
-    if (!exists) return; // Silent fail if file missing (user preference)
+    // 2. Lookup the array pointer and size in sysAudioFiles
+    const uint8_t* audioData = nullptr;
+    size_t audioSize = 0;
+    
+    for (int i = 0; i < numSysAudioFiles; i++) {
+        if (strcasecmp(sysAudioFiles[i].filename, basename) == 0) {
+            audioData = sysAudioFiles[i].data;
+            audioSize = sysAudioFiles[i].size;
+            break;
+        }
+    }
+    
+    if (!audioData || audioSize == 0) {
+        Serial.printf("[%lu] playVoiceFeedback: [NOT FOUND] '%s' in PROGMEM\n", millis(), basename);
+        // Silent fail if file missing from PROGMEM
+        return; 
+    }
+
+    Serial.printf("[%lu] playVoiceFeedback: [PLAY] '%s' (Size: %u)\n", millis(), basename, audioSize);
 
     // Unmute
     g_allowAudio = true;
     delay(120); // Ramp up (Increased to prevent pop)
     
-    if (startStream(0, fullPath)) {
+    // Play on Stream 0 (Dedicated System Voice Stream)
+    if (startProgmemStream(0, audioData, audioSize)) {
         // Wait for it to finish
         // Since we are blocking the main loop, we MUST manually pump the audio data!
         while (streams[0].active) {
@@ -421,8 +472,15 @@ void playVoiceFeedback(const char* filename) {
         }
     }
     
-    // Mute again
+    // Mute again (Restore "Silence" state between files)
+    
+    // Rev.A (Software Mute): Stop clocks to silence
+    #if defined(MUTE_DURING_SYNC) && !defined(I2S_MUTE_PIN)
     g_allowAudio = false;
+    #endif
+    
+    // Rev.B (Hardware Mute): Clocks stay running, Mute Pin handles silence
+    
     delay(5);
 }
 
@@ -439,13 +497,12 @@ void playVoiceNumber(int number) {
 }
 
 void playBaudFeedback(long rate) {
-    playVoiceFeedback("setting.wav");
-    playVoiceFeedback("serial.wav"); 
-    playVoiceFeedback("baud_rate.wav"); 
+    playVoiceFeedback("baud_rate");
+    playVoiceFeedback("setting"); 
     
     // User Requested Logic:
-    // 2400 -> "24" "hundred"
-    // 115200 -> "11" "52" "hundred"
+    // 115200 -> "11" "52" "0" "0"
+    // 9600 -> "96" "0" "0"
     
     long hundreds = rate / 100;
     
@@ -454,17 +511,54 @@ void playBaudFeedback(long rate) {
         int p1 = hundreds / 100;
         int p2 = hundreds % 100;
         playVoiceNumber(p1);
+        delay(50);
         playVoiceNumber(p2);
     } else {
-        // e.g. 24 -> 24
+        // e.g. 96 -> 96
         playVoiceNumber((int)hundreds);
     }
     
-    playVoiceFeedback("hundred.wav");
+    delay(50);
+    playVoiceNumber(0);
+    delay(50);
+    playVoiceNumber(0);
+}
+
+void playPageFeedback(char page) {
+    // "sound_bank" "1" "page" "setting" "_b" "reboot_required"
+    playVoiceFeedback("sound_bank");
+    playVoiceNumber(1);
+    playVoiceFeedback("page");
+    playVoiceFeedback("setting");
     
-    delay(100);
-    // "Hz"
-    playVoiceFeedback("hz.wav");
+    char pageFile[4];
+    snprintf(pageFile, sizeof(pageFile), "_%c", (char)tolower(page));
+    playVoiceFeedback(pageFile);
+    
+    playVoiceFeedback("reboot_required");
+}
+
+void playUSBFeedback(bool enabled) {
+    // "_u" "_s" "_b" "mode" "enabled"
+    playVoiceFeedback("_u");
+    playVoiceFeedback("_s");
+    playVoiceFeedback("_b");
+    playVoiceFeedback("mode");
+    if (enabled) {
+        playVoiceFeedback("enabled");
+    } else {
+        playVoiceFeedback("disabled");
+    }
+}
+
+void playCCRCFeedback() {
+    // "sound_bank" "1" "_c" "_r" "_c" "reset"
+    playVoiceFeedback("sound_bank");
+    playVoiceNumber(1);
+    playVoiceFeedback("_c");
+    playVoiceFeedback("_r");
+    playVoiceFeedback("_c");
+    playVoiceFeedback("reset");
 }
 
 void playBankNameFeedback(char page) {
@@ -531,43 +625,36 @@ void playFirmwareUpdateFeedback(bool fwUpdated) {
         return;
     }
 
-    // Check for Voice Feedback Directory
-    bool hasVoiceFeedback = false;
-    mutex_enter_blocking(&sd_mutex);
-    if (sd.exists("/0_System")) {
-        hasVoiceFeedback = true;
-    }
-    mutex_exit(&sd_mutex);
-
-    if (hasVoiceFeedback) {
-        //Serial.println("  Firmware Feedback: Playing voice sequence...");
-        playVoiceFeedback("chirp.wav");
-        playVoiceFeedback("audio_engine.wav");
-        delay(200);
-        playVoiceFeedback("firmware.wav");  
-        playVoiceFeedback("updated.wav");
-        playVoiceFeedback("0002.wav");
-        playVoiceFeedback("new_version.wav");
-        delay(200);
-        
-        // Speak version stored in VERSION_STRING (e.g. 20251221)
-        // Skip first 2 digits ("20"), read pairs: "25", "12", "21"
-        if (strlen(VERSION_STRING) >= 8) {
-           // 25
-           int year = (VERSION_STRING[2] - '0') * 10 + (VERSION_STRING[3] - '0');
-           playVoiceNumber(year);
-           delay(100);
-           
-           // 12
-           int month = (VERSION_STRING[4] - '0') * 10 + (VERSION_STRING[5] - '0');
-           playVoiceNumber(month);
-           delay(100);
-           
-           // 21
-           int day = (VERSION_STRING[6] - '0') * 10 + (VERSION_STRING[7] - '0');
-           playVoiceNumber(day);
-           delay(150);
-        }
+    // All system voices are now stored safely in PROGMEM!
+    // No SD card access required.
+    
+    //Serial.println("  Firmware Feedback: Playing voice sequence...");
+    playVoiceFeedback("chirp");
+    playVoiceFeedback("audio_trigger");
+    delay(200);
+    playVoiceFeedback("firmware");  
+    playVoiceFeedback("updated");
+    playVoiceFeedback("0002");
+    playVoiceFeedback("new_version");
+    delay(200);
+    
+    // Speak version stored in VERSION_STRING (e.g. 20260120)
+    // Skip first 2 digits ("20"), read pairs: "26", "01", "20"
+    if (strlen(VERSION_STRING) >= 8) {
+       // 26
+       int year = (VERSION_STRING[2] - '0') * 10 + (VERSION_STRING[3] - '0');
+       playVoiceNumber(year);
+       delay(100);
+       
+       // 01
+       int month = (VERSION_STRING[4] - '0') * 10 + (VERSION_STRING[5] - '0');
+       playVoiceNumber(month);
+       delay(100);
+       
+       // 20
+       int day = (VERSION_STRING[6] - '0') * 10 + (VERSION_STRING[7] - '0');
+       playVoiceNumber(day);
+       delay(150);
     }
 }
 
@@ -785,6 +872,9 @@ bool syncBank1ToFlash() {
                         uint8_t buffer[CHUNK_SIZE];
                         uint32_t remaining = sdSize;
                         bool copySuccess = true;
+                        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
+                        digitalWrite(I2S_MUTE_PIN, LOW); // Mute (Low = Soft Mute)
+                        #endif
                         Serial.printf("Copying: %s (%lu KB)... ", 
                                      filename, sdSize / 1024);
                         while (remaining > 0 && copySuccess) {
@@ -813,6 +903,10 @@ bool syncBank1ToFlash() {
                         }
                         
                         flashFile.close();
+
+                        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
+                        digitalWrite(I2S_MUTE_PIN, HIGH); // Unmute
+                        #endif
                         if (copySuccess) {
                             Serial.println("OK");
                             filesCopied++;

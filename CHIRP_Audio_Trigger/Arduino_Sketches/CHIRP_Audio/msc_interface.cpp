@@ -111,10 +111,12 @@ void pollMSCTrigger() {
     static bool pinWasActive = false;
 
     if (pinActive && !g_mscActive) {
+        playUSBFeedback(true);
         startMSC();
         pinWasActive = true;
     } else if (!pinActive && g_mscActive && pinWasActive) {
         // When jumper removed, stop.
+        playUSBFeedback(false);
         stopMSC();
         pinWasActive = false;
     }

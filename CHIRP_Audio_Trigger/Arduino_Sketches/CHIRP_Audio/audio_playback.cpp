@@ -71,7 +71,6 @@ MP3DecoderHelix** mp3Decoders = nullptr;
 bool* mp3DecoderInUse = nullptr;
 
 // Context for the callback (since library doesn't pass user data through write)
-// Context for the callback (since library doesn't pass user data through write)
 volatile int currentDecodingStream = -1;
 
 // AAC Globals
@@ -120,20 +119,40 @@ void initAudioSystem() {
         streams[i].ringBuffer = &streamBuffers[i];
         streams[i].stopRequested = false;
         streams[i].fileFinished = false;
+        streams[i].progmemData = nullptr;
         
-        // Allocate Buffer in PSRAM
-        // streamBufferSize samples * 2 bytes
-        streams[i].ringBuffer->buffer = (int16_t*)pmalloc(streamBufferSize * sizeof(int16_t));
+        // Allocate Buffer
+        if (i == 0) {
+            // STATIC BUFFER LIMIT FOR PROGMEM STREAM
+            // 32K samples * 2 bytes = 64KB Standard RAM
+            // (Provides massive 64KB headroom to absorb worst-case MP3 frame bursts without dropping PCM samples)
+            int sysBufferSize = 32768; 
+            streams[i].ringBuffer->bufferMask = sysBufferSize - 1;
+            streams[i].ringBuffer->buffer = (int16_t*)malloc(sysBufferSize * sizeof(int16_t));
+            
+            if (streams[i].ringBuffer->buffer) {
+                #ifdef DEBUG
+                Serial.printf("Stream %d: Buffer allocated in INTERNAL RAM (64 KB)\n", i);
+                #endif
+            }
+        } else {
+            // NORMAL STREAMS: PSRAM
+            // streamBufferSize samples * 2 bytes
+            streams[i].ringBuffer->bufferMask = streamBufferMask; // Global mask
+            streams[i].ringBuffer->buffer = (int16_t*)pmalloc(streamBufferSize * sizeof(int16_t));
+            
+            if (streams[i].ringBuffer->buffer) {
+                #ifdef DEBUG
+                Serial.printf("Stream %d: Buffer allocated in PSRAM (%d KB)\n", i, (streamBufferSize * 2) / 1024);
+                #endif
+            } else {
+                Serial.printf("Stream %d: ERROR - PSRAM Allocation Failed!\n", i);
+            }
+        }
         
         if (streams[i].ringBuffer->buffer) {
             // Success
             streams[i].ringBuffer->clear();
-            #ifdef DEBUG
-            Serial.printf("Stream %d: Buffer allocated in PSRAM (%d KB)\n", i, (streamBufferSize * 2) / 1024);
-            #endif
-        } else {
-            // Allocation Failed!
-            Serial.printf("Stream %d: ERROR - PSRAM Allocation Failed!\n", i);
         }
         delay(10); // Prevent power spike / bus contention during burst allocation
     }
@@ -162,7 +181,6 @@ static inline int16_t i32_to_i16(int32_t v) { if (v > 32767) return 32767; if (v
 // ===================================
 // This function iterates through all active streams, reads data from their
 // respective files (Flash or SD), decodes it (if MP3), and pushes it into
-// the stream's Ring Buffer.
 // the stream's Ring Buffer.
 void fillStreamBuffers() {
     // Safety check
@@ -229,7 +247,7 @@ void fillStreamBuffers() {
                     #ifdef DEBUG
                     uint32_t tStart = micros();
                     #endif
-                    mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    int consumed = mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
                     #ifdef DEBUG
                     uint32_t tDur = micros() - tStart;
                     totalDecodeTime += tDur;
@@ -237,6 +255,12 @@ void fillStreamBuffers() {
                     decodeCount++;
                     #endif
                     currentDecodingStream = -1;
+                    
+                    if (consumed >= 0 && consumed < bytesRead) {
+                        mutex_enter_blocking(&sd_mutex);
+                        if (s->sdFile) s->sdFile.seek(s->sdFile.position() - (bytesRead - consumed));
+                        mutex_exit(&sd_mutex);
+                    }
                 }
             }
             
@@ -263,8 +287,64 @@ void fillStreamBuffers() {
                 if (bytesRead > 0 && s->decoderIndex != -1) {
                     // Set global context before writing
                     currentDecodingStream = i;
-                    mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    int consumed = mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
                     currentDecodingStream = -1;
+                    
+                    if (consumed >= 0 && consumed < bytesRead) {
+                        mutex_enter_blocking(&flash_mutex);
+                        if (s->flashFile) s->flashFile.seek(s->flashFile.position() - (bytesRead - consumed));
+                        mutex_exit(&flash_mutex);
+                    }
+                }
+            }
+
+        } else if (s->type == STREAM_TYPE_MP3_PROGMEM) {
+            // --- MP3 (PROGMEM / Memory) ---
+            if (available > 16000) {  // Require 16,000 samples of empty space before feeding the decoder to absorb massive 11025Hz/22050Hz upsample bursts
+                uint8_t mp3Buf[128];  // Feed 128 bytes at a time (enough to parse quickly but not overwhelm)
+                int bytesRead = 0;
+                
+                if (s->progmemData) {
+                    size_t remaining = s->progmemSize - s->progmemPos;
+                    if (remaining > 0) {
+                        bytesRead = (remaining > sizeof(mp3Buf)) ? sizeof(mp3Buf) : remaining;
+                        memcpy(mp3Buf, s->progmemData + s->progmemPos, bytesRead);
+                        s->progmemPos += bytesRead;
+                    }
+                    // Check if we just consumed the last chunk
+                    if (s->progmemPos >= s->progmemSize) {
+                        // All PROGMEM bytes have been fed to the decoder.
+                        // CRITICAL: The decoder buffers data internally and only decodes
+                        // when it has a complete frame. We MUST flush it now to squeeze
+                        // out any remaining PCM data before we set fileFinished,
+                        // otherwise fillStreamBuffers will skip this stream forever
+                        // (due to the `if (fileFinished) continue;` check at the top)
+                        // and the last 40-60% of the audio will be silently lost.
+                        if (bytesRead > 0 && s->decoderIndex != -1) {
+                            currentDecodingStream = i;
+                            mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                            mp3Decoders[s->decoderIndex]->flush();
+                            currentDecodingStream = -1;
+                            bytesRead = 0; // Already handled
+                        } else if (s->decoderIndex != -1) {
+                            currentDecodingStream = i;
+                            mp3Decoders[s->decoderIndex]->flush();
+                            currentDecodingStream = -1;
+                        }
+                        s->fileFinished = true;
+                    }
+                } else {
+                    s->fileFinished = true;
+                }
+                
+                if (bytesRead > 0 && s->decoderIndex != -1) {
+                    currentDecodingStream = i;
+                    int consumed = mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    currentDecodingStream = -1;
+                    
+                    if (consumed >= 0 && consumed < bytesRead) {
+                        s->progmemPos -= (bytesRead - consumed);
+                    }
                 }
             }
 
@@ -287,8 +367,14 @@ void fillStreamBuffers() {
                 
                 if (bytesRead > 0 && s->decoderIndex != -1) {
                     currentDecodingStream = i;
-                    aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
+                    int consumed = aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
                     currentDecodingStream = -1;
+                    
+                    if (consumed >= 0 && consumed < bytesRead) {
+                        mutex_enter_blocking(&sd_mutex);
+                        if (s->sdFile) s->sdFile.seek(s->sdFile.position() - (bytesRead - consumed));
+                        mutex_exit(&sd_mutex);
+                    }
                 }
             }
         } else if (s->type == STREAM_TYPE_AAC_FLASH) {
@@ -310,8 +396,14 @@ void fillStreamBuffers() {
                 
                 if (bytesRead > 0 && s->decoderIndex != -1) {
                     currentDecodingStream = i;
-                    aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
+                    int consumed = aacDecoders[s->decoderIndex]->write(aacBuf, bytesRead);
                     currentDecodingStream = -1;
+                    
+                    if (consumed >= 0 && consumed < bytesRead) {
+                        mutex_enter_blocking(&flash_mutex);
+                        if (s->flashFile) s->flashFile.seek(s->flashFile.position() - (bytesRead - consumed));
+                        mutex_exit(&flash_mutex);
+                    }
                 }
             }
         } else if (s->type == STREAM_TYPE_M4A_SD || s->type == STREAM_TYPE_M4A_FLASH) {
@@ -584,49 +676,50 @@ void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* 
     if (streams[streamIdx].sampleRate == 0 && info.samprate != 0) {
         streams[streamIdx].sampleRate = info.samprate;
     }
-    // Handle 22.05kHz upsampling vs Normal 44.1kHz
-    if (info.samprate == 22050) {
-        // --- 22.05kHz Handling ---
-        if (channels == 2) {
-             // Stereo: Process in pairs (L, R) and duplicate the frame
-             for (size_t i = 0; i < len; i += 2) {
-                 if (i + 1 >= len) break;
-                 
-                 int16_t left = pcm_buffer[i];
-                 int16_t right = pcm_buffer[i+1];
-                 
-                 // Frame 1
-                 if (!rb->push(left)) break;
-                 if (!rb->push(right)) break;
-                 // Frame 2 (Duplicate)
-                 if (!rb->push(left)) break;
-                 if (!rb->push(right)) break;
-             }
-        } else {
-            // Mono: Duplicate sample 4 times (L1, R1, L2, R2)
-             for (size_t i = 0; i < len; i++) {
-                int16_t sample = pcm_buffer[i];
-                if (!rb->push(sample)) break; // L1
-                if (!rb->push(sample)) break; // R1
-                if (!rb->push(sample)) break; // L2
-                if (!rb->push(sample)) break; // R2
-                if (!rb->push(sample)) break; // R2
-             }
+    // Dynamic Nearest-Neighbor Upsampling to target 44100Hz
+    uint32_t targetRate = 44100;
+    uint32_t srcRate = info.samprate ? info.samprate : targetRate;
+
+    if (channels == 1) {
+        // MONO -> STEREO with Upsampling
+        size_t out_len = ((size_t)len * targetRate) / srcRate;
+        for (size_t k = 0; k < out_len; k++) {
+            // Spin-wait for buffer space (Core 1 I2S drains independently)
+            int waitCount = 0;
+            while (rb->availableForWrite() < 2 && waitCount < 10000) {
+                delayMicroseconds(10); // 10us * 10000 = 100ms max wait
+                waitCount++;
+            }
+            if (rb->availableForWrite() < 2) break; // Timeout safety
+            
+            size_t in_idx = (k * srcRate) / targetRate;
+            if (in_idx >= len) in_idx = len - 1; // Safety bounds
+            
+            int16_t sample = pcm_buffer[in_idx];
+            rb->push(sample); // Left
+            rb->push(sample); // Right
         }
     } else {
-        // --- Normal 44.1kHz Handling ---
-        if (channels == 1) {
-             // MONO -> STEREO (Duplicate)
-            for (size_t i = 0; i < len; i++) {
-                int16_t sample = pcm_buffer[i];
-                if (!rb->push(sample)) break; // Left
-                if (!rb->push(sample)) break; // Right
+        // STEREO -> STEREO with Upsampling
+        // Note: len is total samples (L, R, L, R...). Total frames = len / 2
+        size_t frames = len / 2;
+        size_t out_frames = (frames * targetRate) / srcRate;
+        
+        for (size_t k = 0; k < out_frames; k++) {
+            // Spin-wait for buffer space (Core 1 I2S drains independently)
+            int waitCount = 0;
+            while (rb->availableForWrite() < 2 && waitCount < 10000) {
+                delayMicroseconds(10);
+                waitCount++;
             }
-        } else {
-             // STEREO (Pass through)
-            for (size_t i = 0; i < len; i++) {
-                rb->push(pcm_buffer[i]);
-            }
+            if (rb->availableForWrite() < 2) break; // Timeout safety
+            
+            size_t in_frame = (k * srcRate) / targetRate;
+            if (in_frame >= frames) in_frame = frames - 1; // Safety bounds
+            
+            size_t in_idx = in_frame * 2;
+            rb->push(pcm_buffer[in_idx]);     // Left
+            rb->push(pcm_buffer[in_idx + 1]); // Right
         }
     }
 }
@@ -645,21 +738,38 @@ void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void* 
         streams[streamIdx].sampleRate = info.sampRateOut;
     }
     
-    // Basic Handling (Assuming 44.1kHz mostly, or letting I2S handle slight mismatch if not too far off)
-    // TODO: Add 22kHz support if needed, similar to MP3
-    
-    // Hoist channel check out of loop
+    // Dynamic Nearest-Neighbor Upsampling to target 44100Hz
+    uint32_t targetRate = 44100;
+    uint32_t srcRate = info.sampRateOut ? info.sampRateOut : targetRate;
+
     if (channels == 1) {
-        // MONO -> STEREO (Duplicate)
-        for (size_t i = 0; i < len; i++) {
-            int16_t sample = pcm_buffer[i];
-            if (!rb->push(sample)) break; // Left
-            if (!rb->push(sample)) break; // Right
+        // MONO -> STEREO with Upsampling
+        size_t out_len = ((size_t)len * targetRate) / srcRate;
+        for (size_t k = 0; k < out_len; k++) {
+            if (rb->availableForWrite() < 2) break; // Drop remainder if full
+            
+            size_t in_idx = (k * srcRate) / targetRate;
+            if (in_idx >= len) in_idx = len - 1; // Safety bounds
+            
+            int16_t sample = pcm_buffer[in_idx];
+            rb->push(sample); // Left
+            rb->push(sample); // Right
         }
     } else {
-         // STEREO (Pass through)
-        for (size_t i = 0; i < len; i++) {
-             rb->push(pcm_buffer[i]);
+        // STEREO -> STEREO with Upsampling
+        // Note: len is total samples (L, R, L, R...). Total frames = len / 2
+        size_t frames = len / 2;
+        size_t out_frames = (frames * targetRate) / srcRate;
+        
+        for (size_t k = 0; k < out_frames; k++) {
+            if (rb->availableForWrite() < 2) break; // Drop remainder if full
+            
+            size_t in_frame = (k * srcRate) / targetRate;
+            if (in_frame >= frames) in_frame = frames - 1; // Safety bounds
+            
+            size_t in_idx = in_frame * 2;
+            rb->push(pcm_buffer[in_idx]);     // Left
+            rb->push(pcm_buffer[in_idx + 1]); // Right
         }
     }
 }
@@ -974,6 +1084,60 @@ bool startStream(int streamIdx, const char* filename) {
     return true;
 }
 
+// ===================================
+// Start PROGMEM Stream Playback
+// ===================================
+bool startProgmemStream(int streamIdx, const uint8_t* data, size_t size) {
+    if (streamIdx < 0 || streamIdx >= maxStreams || !streams) return false;
+    if (!data || size == 0) return false;
+    
+    Serial.printf("[%lu] startProgmemStream: streamIdx=%d, data=%p, size=%u\n", millis(), streamIdx, data, size);
+    
+    // Ensure I2S is active
+    g_allowAudio = true;
+    
+    stopStream(streamIdx); // Ensure stopped first
+    
+    AudioStream* s = &streams[streamIdx];
+    
+    // --- Decoder Setup ---
+    int decoderIdx = -1;
+    for (int i = 0; i < maxMp3Decoders; i++) {
+        if (!mp3DecoderInUse[i]) {
+            decoderIdx = i;
+            mp3DecoderInUse[i] = true;
+            break;
+        }
+    }
+    
+    if (decoderIdx != -1) {
+        s->type = STREAM_TYPE_MP3_PROGMEM;
+        if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+    } else {
+        log_message(String("Stream ") + streamIdx + ": ERROR - No MP3 decoders available for PROGMEM");
+        return false;
+    }
+    
+    s->decoderIndex = decoderIdx;
+    s->channels = 2; // Default, actual resolved in callback
+    s->sampleRate = 0; // Unknown until first frame
+    
+    s->progmemData = data;
+    s->progmemSize = size;
+    s->progmemPos = 0;
+    
+    s->fileFinished = false;
+    s->stopRequested = false;
+    s->volume = 1.0f;
+    s->startTime = millis();
+    
+    if (s->ringBuffer) s->ringBuffer->clear();
+    
+    s->active = true;
+    
+    return true;
+}
+
 
 // ===================================
 // Stop Stream Playback
@@ -988,7 +1152,7 @@ void stopStream(int streamIdx) {
     
     // Release Decoder
     if (s->decoderIndex != -1) {
-        if (s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_MP3_FLASH) {
+        if (s->type == STREAM_TYPE_MP3_SD || s->type == STREAM_TYPE_MP3_FLASH || s->type == STREAM_TYPE_MP3_PROGMEM) {
             if (mp3Decoders[s->decoderIndex]) {
                 mp3Decoders[s->decoderIndex]->end();
             }

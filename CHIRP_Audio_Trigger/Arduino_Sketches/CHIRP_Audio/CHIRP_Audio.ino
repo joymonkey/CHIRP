@@ -148,6 +148,11 @@ void setup() {
     pinMode(SD_CS, OUTPUT);
     digitalWrite(SD_CS, HIGH);
 
+    #ifdef I2S_MUTE_PIN
+    pinMode(I2S_MUTE_PIN, OUTPUT);
+    digitalWrite(I2S_MUTE_PIN, HIGH); // Unmute (High = Active/Unmuted for PCM5102A XSMT)
+    #endif
+
     // 2. Stabilization Delay (Critical for USB/Power and Serial Capture)
     #ifdef DEBUG
     delay(3000);
@@ -213,16 +218,22 @@ extern volatile uint32_t bufferUnderrunCount;
     // Initialize SD Card
     Serial.print("\nInitializing SD Card... ");
     SdSpiConfig sdConfig(SD_CS, DEDICATED_SPI, SD_SCK_MHZ(25), &SPI1);
+    
+    bool sdInitialized = false;
+    
     if (!sd.begin(sdConfig)) {
         Serial.println("FAILED at 25MHz, trying 4MHz...");
         SdSpiConfig slowConfig(SD_CS, DEDICATED_SPI, SD_SCK_MHZ(4), &SPI1);
         if (!sd.begin(slowConfig)) {
             Serial.println("FAILED!");
             sd.initErrorPrint(&Serial);
-            playErrorSequence();
+            // Wait to run playErrorSequence until audio streams are allocated!
+        } else {
+            sdInitialized = true;
+            Serial.println("OK (4MHz)");
         }
-        Serial.println("OK (4MHz)");
     } else {
+        sdInitialized = true;
         Serial.println("OK (25MHz)");
     }
     
@@ -254,7 +265,18 @@ extern volatile uint32_t bufferUnderrunCount;
 
     // Parse INI file *before* scanning banks
     Serial.println("\n=== Reading CHIRP.INI ===");
-    bool fwUpdated = parseIniFile();
+    if (sdInitialized) {
+        parseIniFile();
+    }
+    
+    // Check firmware version via LittleFS
+    bool fwUpdated = checkFirmwareVersionLittleFS();
+    
+    // Auto-update the SD INI file's version string if the SD card is available
+    if (sdInitialized && fwUpdated) {
+        writeIniFile();
+    }
+    
     Serial.printf("INI Parse Result: fwUpdated=%s, activePage=%c, useFlash=%d\n", 
                   fwUpdated ? "TRUE" : "FALSE", activeBank1Page, useFlashForBank1);
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
@@ -289,43 +311,62 @@ extern volatile uint32_t bufferUnderrunCount;
     Serial.println();
     delay(50); // Settlement delay
 
+    if (!sdInitialized) {
+        Serial.println("SD Card failed to initialize. Halting in playErrorSequence...");
+        playErrorSequence();
+    }
 
-    // Scan for Valid Bank 1 Pages
-    Serial.println("\n=== Scanning Valid Bank 1 Pages ===");
-    scanValidBank1Pages();
-                  
-    // Scan Bank 1 on SD
-    Serial.println("\n=== Scanning Bank 1 (SD Card) ===");
-    scanBank1();
-    Serial.printf("Found %d sounds in Bank 1\n", bank1SoundCount);
+
+    if (sdInitialized) {
+        // Scan for Valid Bank 1 Pages
+        Serial.println("\n=== Scanning Valid Bank 1 Pages ===");
+        scanValidBank1Pages();
+                      
+        // Scan Bank 1 on SD
+        Serial.println("\n=== Scanning Bank 1 (SD Card) ===");
+        scanBank1();
+        Serial.printf("Found %d sounds in Bank 1\n", bank1SoundCount);
+    }
     
     // Play Firmware Update Feedback
     playFirmwareUpdateFeedback(fwUpdated);
 
-    // Sync Bank 1 to Flash
-    Serial.println("\n=== Syncing Bank 1 to Flash ===");
-    if (!syncBank1ToFlash()) {
-        Serial.println("WARNING: Bank 1 sync incomplete");
-    }
-    
-    // Re-check flash usage
-    LittleFS.info(fsInfo);
-    Serial.printf("  Flash Used: %d KB / %d KB (%.1f%%)\n",
-                  fsInfo.usedBytes / 1024,
-                  fsInfo.totalBytes / 1024,
-                  (fsInfo.usedBytes * 100.0) / fsInfo.totalBytes);
+    if (sdInitialized) {
+        // Sync Bank 1 to Flash
+        Serial.println("\n=== Syncing Bank 1 to Flash ===");
 
-    // Scan SD banks (2-6)
-    Serial.println("\n=== Scanning Banks 2-6 (SD Card) ===");
-    scanSDBanks();
-    Serial.printf("Found %d bank directories\n", sdBankCount);
-    
-    for (int i = 0; i < sdBankCount; i++) {
-        Serial.printf("  Bank %d%c: %s (%d files)\n",
-                     sdBanks[i].bankNum,
-                     sdBanks[i].page ? sdBanks[i].page : ' ',
-                     sdBanks[i].dirName,
-                     sdBanks[i].fileCount);
+        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
+           // Rev.B: Keep I2S clocks active so XSMT pin can mute gracefully without pops
+           g_allowAudio = true; 
+        #elif !defined(MUTE_DURING_SYNC)
+           // Debug: Keep I2S clocks active to monitor noise floor
+           g_allowAudio = true;
+        #endif
+        
+        delay(10);
+        if (!syncBank1ToFlash()) {
+            Serial.println("WARNING: Bank 1 sync incomplete");
+        }
+        
+        // Re-check flash usage
+        LittleFS.info(fsInfo);
+        Serial.printf("  Flash Used: %d KB / %d KB (%.1f%%)\n",
+                      fsInfo.usedBytes / 1024,
+                      fsInfo.totalBytes / 1024,
+                      (fsInfo.usedBytes * 100.0) / fsInfo.totalBytes);
+
+        // Scan SD banks (2-6)
+        Serial.println("\n=== Scanning Banks 2-6 (SD Card) ===");
+        scanSDBanks();
+        Serial.printf("Found %d bank directories\n", sdBankCount);
+        
+        for (int i = 0; i < sdBankCount; i++) {
+            Serial.printf("  Bank %d%c: %s (%d files)\n",
+                         sdBanks[i].bankNum,
+                         sdBanks[i].page ? sdBanks[i].page : ' ',
+                         sdBanks[i].dirName,
+                         sdBanks[i].fileCount);
+        }
     }
     
     // Calculate checksum *after* all banks are scanned
@@ -338,18 +379,23 @@ extern volatile uint32_t bufferUnderrunCount;
             crc.update(bank1Sounds[i].variants[v], strlen(bank1Sounds[i].variants[v]));
         }
     }
-    // 2. Checksum Banks 2-6 (SD) filenames
-    for (int i = 0; i < sdBankCount; i++) {
-        for (int f = 0; f < sdBanks[i].fileCount; f++) {
-            crc.update(sdBanks[i].files[f], strlen(sdBanks[i].files[f]));
+    
+    if (sdInitialized) {
+        // 2. Checksum Banks 2-6 (SD) filenames
+        for (int i = 0; i < sdBankCount; i++) {
+            for (int f = 0; f < sdBanks[i].fileCount; f++) {
+                crc.update(sdBanks[i].files[f], strlen(sdBanks[i].files[f]));
+            }
         }
     }
     globalFilenameChecksum = crc.finalize();
     Serial.println(globalFilenameChecksum);
     
-    // Scan Root Tracks for Legacy Compatibility
-    Serial.println("\n=== Scanning Root Tracks (Legacy) ===");
-    scanRootTracks();
+    if (sdInitialized) {
+        // Scan Root Tracks for Legacy Compatibility
+        Serial.println("\n=== Scanning Root Tracks (Legacy) ===");
+        scanRootTracks();
+    }
     
     // Enable Audio Output (Unmute)
     g_allowAudio = true;
@@ -456,20 +502,9 @@ void loop() {
                    
                    writeIniFile();
                    
+                   
                    // Feedback
-                   playVoiceFeedback("setting.wav");
-                   playVoiceFeedback("sound_bank.wav");
-                   playVoiceFeedback("0001.wav");
-                   playVoiceFeedback("page.wav");
-                   
-                   // Play Letter
-                   char letterFile[16];
-                   char lowerPage = (activeBank1Page >= 'A' && activeBank1Page <= 'Z') ? (activeBank1Page + 32) : activeBank1Page;
-                   snprintf(letterFile, sizeof(letterFile), "_%c.wav", lowerPage);
-                   playVoiceFeedback(letterFile);
-                   
-                   // Spell out Bank Name
-                   playBankNameFeedback(activeBank1Page);
+                   playPageFeedback(activeBank1Page);
                    
                    Serial.printf("Bank 1 Page changed to: %c\n", activeBank1Page);
              }
