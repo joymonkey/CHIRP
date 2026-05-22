@@ -353,7 +353,7 @@ sequenceDiagram
 
 ## Lua Telemetry Script (CHIRP.lua)
 
-The EdgeTX Lua script runs on the transmitter and provides two pages of display.
+The EdgeTX Lua script runs on the transmitter and provides three pages of display.
 
 ### Telemetry Sensor Mapping
 
@@ -384,7 +384,7 @@ The Lua script also caches names to `/SCRIPTS/TELEMETRY/chirp_cache.txt` so the 
 
 Shows the currently selected sound for each of the 4 banks in a split-screen layout. The Sound Index knob position determines which sound is highlighted in each bank. Sound names update live as telemetry arrives.
 
-### Page 2 — Diagnostics & Configuration
+### Page 2 — Diagnostics
 
 Shows detailed system status:
 - All battery voltages (primary, secondary, tertiary)
@@ -392,8 +392,21 @@ Shows detailed system status:
 - Speed mode, dome position angle
 - Autodome and Autochirp on/off status
 - Link quality
+- Placeholder for future WiFi integration
 
-Configuration options (WiFi enable, Bank 1 page change) are displayed as placeholders — they will become interactive when WiFi support is added in a future phase.
+### Page 3 — Settings
+
+Allows the operator to view and modify system configuration variables directly from the transmitter:
+- Bank 1 Page selection
+- Dome motor parameters (Offset, Invert)
+- Voice Debug toggle
+- Foot drive motor inversion
+- Speed multipliers (Slow, Medium, Fast percentages)
+
+#### Telemetry Backchannel
+
+When a setting is changed, the Lua script sends the new value back to the robot via a CRSF Telemetry Push using a `COMMAND` frame (`0x32`). 
+On the Pico 2W, a custom `CRSFInterceptor` sits between the serial port and the standard CRSF library. It intercepts these `0x32` command packets, verifies their CRC, and updates the `userConfig` structure. The updated configuration is then saved persistently to the Pico's flash memory using the `LittleFS` file system so that settings survive reboots.
 
 ---
 
