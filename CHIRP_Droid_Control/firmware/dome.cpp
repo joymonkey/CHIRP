@@ -1,4 +1,5 @@
 #include "dome.h"
+#include "config_manager.h"
 #include "globals.h"
 #include "debug.h"
 #include <Servo.h>
@@ -31,7 +32,13 @@ void domeUpdate() {
       DBG_EVENT(DBG_DOME, "Manual Override Started");
     }
     isManualOverride = true;
-    domeServo.writeMicroseconds(yawStick);
+    
+    int outYaw = yawStick;
+    if (userConfig.domeInvert) {
+      outYaw = 1500 - (yawStick - 1500);
+    }
+    
+    domeServo.writeMicroseconds(outYaw);
     lastAutodomeTime = now; // Delay autodome while manually controlling
   } else {
     if (isManualOverride) {
@@ -47,7 +54,10 @@ void domeUpdate() {
     line.trim();
     if (line.startsWith("#DP@") || line.startsWith("#DP!") || line.startsWith("#DP$") || line.startsWith("#DP%")) {
       // Extract position (e.g. #DP@360)
-      robotState.domeAngle = line.substring(4).toInt();
+      int rawAngle = line.substring(4).toInt();
+      rawAngle = (rawAngle + userConfig.domeOffset) % 360;
+      if (rawAngle < 0) rawAngle += 360;
+      robotState.domeAngle = rawAngle;
       DBG_THROTTLE(DBG_DOME, 1000, "RAD Position: %d", robotState.domeAngle);
     }
   }

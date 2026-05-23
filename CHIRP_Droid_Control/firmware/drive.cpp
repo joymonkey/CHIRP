@@ -1,4 +1,5 @@
 #include "drive.h"
+#include "config_manager.h"
 #include "globals.h"
 #include "debug.h"
 #include <Servo.h>
@@ -31,12 +32,15 @@ void mixBHD(int stickX, int stickY, int &outLeft, int &outRight) {
   r = constrain(r, -100, 100);
 
   // Apply speed mode factor
-  float factor = SPEED_FACTOR_SLOW;
-  if (robotState.speedMode == 2) factor = SPEED_FACTOR_MED;
-  else if (robotState.speedMode == 3) factor = SPEED_FACTOR_FAST;
+  float factor = userConfig.speedSlow / 100.0f;
+  if (robotState.speedMode == 2) factor = userConfig.speedMed / 100.0f;
+  else if (robotState.speedMode == 3) factor = userConfig.speedFast / 100.0f;
 
   l = (int)(l * factor);
   r = (int)(r * factor);
+  
+  if (userConfig.leftMotorInvert) l = -l;
+  if (userConfig.rightMotorInvert) r = -r;
 
   // Map back to servo microseconds
   outLeft = map(l, -100, 100, SERVO_MIN_US, SERVO_MAX_US);

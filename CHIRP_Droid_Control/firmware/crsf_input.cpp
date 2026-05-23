@@ -1,10 +1,12 @@
 #include "crsf_input.h"
+#include "CRSFInterceptor.h"
 #include "globals.h"
 #include "debug.h"
 #include "voice_debug.h"
 #include "audio_link.h"
 #include <AlfredoCRSF.h>
 
+CRSFInterceptor crsfStream(SerialCRSF);
 AlfredoCRSF crsf;
 static int lastZone = 0;
 static bool stopTriggered = false;
@@ -21,11 +23,12 @@ void crsfInit()
   SerialCRSF.setRX(CRSF_RX_PIN);
   SerialCRSF.setTX(CRSF_TX_PIN);
   SerialCRSF.begin(CRSF_BAUD, SERIAL_8N1);
-  crsf.begin(SerialCRSF);
+  crsf.begin(crsfStream);
 }
 
 void crsfUpdate()
 {
+  crsfStream.update();
   crsf.update();
 
   bool linkUp = crsf.isLinkUp();

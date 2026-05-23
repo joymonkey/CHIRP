@@ -1,4 +1,5 @@
 #include "voice_debug.h"
+#include "config_manager.h"
 #include "globals.h"
 #include "debug.h"
 #include <stdarg.h>
@@ -55,6 +56,8 @@ static bool isQueueEmpty() {
 }
 
 void voiceDebugSayPriority(uint8_t priority, const char* word1, ...) {
+  if (!userConfig.voiceDebug) return;
+  
   if (priority > 3) priority = 3;
   
   uint32_t now = millis();
@@ -87,6 +90,7 @@ void voiceDebugSayPriority(uint8_t priority, const char* word1, ...) {
 }
 
 void voiceDebugSay(const char* word1, ...) {
+  if (!userConfig.voiceDebug) return;
   uint32_t now = millis();
   uint8_t priority = 3;
   

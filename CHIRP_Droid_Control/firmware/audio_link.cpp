@@ -209,6 +209,11 @@ void audioSetVolume(uint8_t volume) {
   SerialAudio.printf("VOL:%d\n", vol);
 }
 
+void audioSendCommand(const char* command) {
+  DBG_EVENT(DBG_AUDIO, "→ TX: %s", command);
+  SerialAudio.println(command);
+}
+
 const char* getSoundName(uint8_t bank, uint8_t page, uint8_t index) {
   if (bank == 0 || bank > MAX_BANKS) return "ErrB";
   if (page >= MAX_PAGES) return "ErrP";

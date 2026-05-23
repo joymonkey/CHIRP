@@ -1,6 +1,6 @@
--- CHIRP2 LUA Telemetry Script for Radiomaster Zorro
+-- CHIRP LUA Telemetry Script for Radiomaster Zorro
 
-local CACHE_FILE = "/SCRIPTS/TELEMETRY/chirp2_cache.txt"
+local CACHE_FILE = "/SCRIPTS/TELEMETRY/chirp_cache.txt"
 local soundNames = {}
 local pageNames = {}
 local soundStructure = {}
@@ -12,7 +12,20 @@ local lastPvSaveTime = 0
 local function sanitize(s)
     return string.gsub(s, "[%s%(%)%'%-%._]", "")
 end
-local activeScreen = 1 -- 1: Dashboard, 2: Diagnostics
+local activeScreen = 1 -- 1: Dashboard, 2: Diagnostics, 3: Settings
+local settings = {
+  {id=1, name="Bank 1 Page", type="char", val=65, min=65, max=67},
+  {id=2, name="Dome Offset", type="int", val=0, min=-127, max=127},
+  {id=3, name="Dome Invert", type="bool", val=0, min=0, max=1},
+  {id=4, name="Voice Debug", type="bool", val=1, min=0, max=1},
+  {id=5, name="L Motor Inv", type="bool", val=0, min=0, max=1},
+  {id=6, name="R Motor Inv", type="bool", val=0, min=0, max=1},
+  {id=7, name="Speed Slow", type="int", val=30, min=0, max=100},
+  {id=8, name="Speed Med", type="int", val=70, min=0, max=100},
+  {id=9, name="Speed Fast", type="int", val=100, min=0, max=100}
+}
+local settingsIdx = 1
+local settingsEdit = false
 
 -- Init structure
 for b=1,4 do
@@ -40,6 +53,9 @@ local function loadCache()
                     local b = string.sub(k, 2, 2)
                     local p = string.sub(k, 3, 3)
                     pageNames[b .. p] = v
+                elseif string.sub(k, 1, 1) == "S" then
+                    local idx = tonumber(string.sub(k, 2))
+                    if idx and settings[idx] then settings[idx].val = tonumber(v) end
                 else
                     soundNames[k] = v
                 end
@@ -54,6 +70,7 @@ local function saveCache()
     if f ~= nil then
         for k, v in pairs(soundNames) do io.write(f, k .. "=" .. v .. ";\n") end
         for k, v in pairs(pageNames) do io.write(f, "P" .. k .. "=" .. v .. ";\n") end
+        for i, s in ipairs(settings) do io.write(f, "S" .. i .. "=" .. s.val .. ";\n") end
         for b=1,4 do
             for _, p in ipairs({'A', 'B', 'C'}) do
                  io.write(f, "C" .. b .. p .. "=" .. soundStructure[b][p] .. ";\n")
@@ -79,8 +96,38 @@ end
 local function run(event)
   lcd.clear()
 
-  if event == EVT_PAGE_BREAK or event == EVT_ENTER_BREAK then
-      activeScreen = (activeScreen == 1) and 2 or 1
+  if activeScreen == 3 and settingsEdit then
+    if event == EVT_ENTER_BREAK then
+      settingsEdit = false
+      local pVal = settings[settingsIdx].val
+      if pVal < 0 then pVal = 256 + pVal end
+      crossfireTelemetryPush(0x32, {0xC8, 0xEA, settings[settingsIdx].id, pVal})
+      cacheDirty = true
+    elseif event == EVT_ROT_LEFT or event == EVT_MINUS_FIRST then
+      settings[settingsIdx].val = settings[settingsIdx].val - 1
+      if settings[settingsIdx].val < settings[settingsIdx].min then settings[settingsIdx].val = settings[settingsIdx].min end
+    elseif event == EVT_ROT_RIGHT or event == EVT_PLUS_FIRST then
+      settings[settingsIdx].val = settings[settingsIdx].val + 1
+      if settings[settingsIdx].val > settings[settingsIdx].max then settings[settingsIdx].val = settings[settingsIdx].max end
+    end
+  else
+    if event == EVT_PAGE_BREAK or (event == EVT_ENTER_BREAK and activeScreen ~= 3) then
+      activeScreen = activeScreen + 1
+      if activeScreen > 3 then activeScreen = 1 end
+    elseif event == EVT_EXIT_BREAK then
+      activeScreen = 1
+      settingsEdit = false
+    elseif activeScreen == 3 then
+      if event == EVT_ENTER_BREAK then
+        settingsEdit = true
+      elseif event == EVT_ROT_LEFT or event == EVT_MINUS_FIRST then
+        settingsIdx = settingsIdx - 1
+        if settingsIdx < 1 then settingsIdx = 1 end
+      elseif event == EVT_ROT_RIGHT or event == EVT_PLUS_FIRST then
+        settingsIdx = settingsIdx + 1
+        if settingsIdx > #settings then settingsIdx = #settings end
+      end
+    end
   end
 
   -- 1. TELEMETRY - FLIGHT MODE
@@ -229,9 +276,9 @@ local function run(event)
       drawBankBlock(0, 39, 3, false)
       drawBankBlock(65, 39, 4, true)
       
-  else
+  elseif activeScreen == 2 then
       -- DIAGNOSTICS SCREEN
-      lcd.drawText(0, 0, "CHIRP2 Diagnostics     [Pg 2]", SMLSIZE | INVERS)
+      lcd.drawText(0, 0, "CHIRP Diagnostics      [Pg 2]", SMLSIZE | INVERS)
       lcd.drawLine(0, 7, 128, 7, SOLID, FORCE)
       
       lcd.drawText(0, 10, string.format("Batt1: %.1fv  Batt2: %.1fv", batt1, batt2), SMLSIZE)
@@ -249,6 +296,26 @@ local function run(event)
       lcd.drawLine(0, 42, 128, 42, DOTTED, FORCE)
       lcd.drawText(0, 45, "> WiFi: OFF", SMLSIZE)
       lcd.drawText(0, 53, "  Bank1 Page: A    Link: " .. linkQuality .. "%", SMLSIZE)
+  elseif activeScreen == 3 then
+      -- SETTINGS SCREEN
+      lcd.drawText(0, 0, "CHIRP Settings         [3/3]", SMLSIZE | INVERS)
+      lcd.drawLine(0, 7, 128, 7, SOLID, FORCE)
+      
+      local y = 12
+      for i = 1, 5 do
+          local idx = settingsIdx - 2 + i
+          if idx >= 1 and idx <= #settings then
+              local s = settings[idx]
+              local prefix = (idx == settingsIdx) and (settingsEdit and " > " or " * ") or "   "
+              local valStr = ""
+              if s.type == "char" then valStr = string.char(s.val)
+              elseif s.type == "bool" then valStr = (s.val == 1) and "ON" or "OFF"
+              else valStr = tostring(s.val) end
+              
+              lcd.drawText(0, y, prefix .. s.name .. ": " .. valStr, SMLSIZE)
+          end
+          y = y + 10
+      end
   end
 
   return 0

@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "config.h"
+#include "config_manager.h"
 #include "globals.h"
 #include "debug.h"
 #include "voice_debug.h"
@@ -17,6 +18,9 @@ void setup() {
 
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, HIGH);
+
+  initConfigManager();
+  DBG(DBG_GENERAL, "✓ Config Manager initialized");
 
   initGlobals();
   DBG(DBG_GENERAL, "✓ Globals initialized");
