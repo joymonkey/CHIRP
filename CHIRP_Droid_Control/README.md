@@ -1,6 +1,6 @@
-# CHIRP2 — System Overview
+# CHIRP Droid Control — System Overview
 
-This is control firmware for an R2-D2 style mobile robot. It runs on a **Raspberry Pi Pico 2 W** (RP2350) and is operated remotely via a **Radiomaster Zorro** EdgeTX transmitter over **ExpressLRS** (ELRS). A companion **Lua telemetry script** on the transmitter provides a live sound dashboard and diagnostics display.
+This is control firmware for an R2-D2 style mobile robot. It runs on a **Raspberry Pi Pico 2 W** (RP2350) and is operated remotely via a **Radiomaster Zorro** EdgeTX transmitter (additional transmitter support expected in future) over **ExpressLRS** or **Crossfire** RC radio link. A companion **Lua telemetry script** on the transmitter provides a live sound dashboard and diagnostics display.
 
 This document describes the complete system architecture, data flows, and design rationale as implemented in the firmware.
 
@@ -14,7 +14,7 @@ This document describes the complete system architecture, data flows, and design
 - [Sound Playback System](#sound-playback-system)
 - [Audio Manifest Sync](#audio-manifest-sync)
 - [Telemetry System](#telemetry-system)
-- [Lua Telemetry Script](#lua-telemetry-script-chirp2lua)
+- [Lua Telemetry Script](#lua-telemetry-script-chirplua)
 - [Dome Control](#dome-control)
 - [Foot Drive](#foot-drive)
 - [Autodome & Autochirp](#autodome--autochirp)
@@ -29,7 +29,7 @@ This document describes the complete system architecture, data flows, and design
 graph LR
     subgraph Operator
         TX["EdgeTX Transmitter<br/>(Radiomaster Zorro)"]
-        LUA["CHIRP2.lua<br/>Telemetry Dashboard"]
+        LUA["CHIRP.lua<br/>Telemetry Dashboard"]
     end
     subgraph Robot
         ELRS["ELRS Receiver"]
@@ -75,7 +75,7 @@ graph LR
 
 ### UART Allocation
 
-The RP2350 has 2 hardware UARTs plus programmable PIO state machines that can emulate additional UARTs. CHIRP2 uses 4 total serial interfaces without any SoftwareSerial hacks.
+The RP2350 has 2 hardware UARTs plus programmable PIO state machines that can emulate additional UARTs. CHIRP uses 4 total serial interfaces without any SoftwareSerial hacks.
 
 | UART | Peripheral | Baud Rate | TX Pin | RX Pin | Type |
 |------|-----------|-----------|--------|--------|------|
@@ -192,7 +192,7 @@ The biggest improvement over the original CHIRP_Core — manifest sync is now **
 
 ```mermaid
 sequenceDiagram
-    participant P as Pico (CHIRP2)
+    participant P as Pico (CHIRP)
     participant A as CHIRP_Audio
 
     Note over P: Boot
@@ -245,7 +245,7 @@ AudioManifest manifest;
 
 ## Telemetry System
 
-The Pico sends telemetry data upstream through the CRSF link to the EdgeTX transmitter. Because CRSF has limited bandwidth and specific frame types, CHIRP2 uses a **round-robin scheduler** and creative data packing to transmit everything the Lua dashboard needs.
+The Pico sends telemetry data upstream through the CRSF link to the EdgeTX transmitter. Because CRSF has limited bandwidth and specific frame types, CHIRP uses a **round-robin scheduler** and creative data packing to transmit everything the Lua dashboard needs.
 
 ### Round-Robin Schedule
 
@@ -259,9 +259,9 @@ The scheduler cycles through 3 telemetry slots at 30ms per slot (each type updat
 
 ### Slot 0 — Battery Sensor Frame
 
-The standard CRSF Battery Sensor frame has 4 fields. CHIRP2 repurposes them:
+The standard CRSF Battery Sensor frame has 4 fields. CHIRP repurposes them:
 
-| Field | Standard CRSF Use | CHIRP2 Use |
+| Field | Standard CRSF Use | CHIRP Use |
 |-------|------------------|------------|
 | `voltage` | Battery voltage | Multi-battery voltage (offset encoding) |
 | `current` | Current draw | Instantaneous current draw (100mA units) |
@@ -284,7 +284,7 @@ Example: Primary = 12.2V → sent as `122`. Secondary = 11.9V → sent as `1119`
 
 The GPS frame fields are repurposed for system status:
 
-| GPS Field | CHIRP2 Data | Encoding |
+| GPS Field | CHIRP Data | Encoding |
 |-----------|------------|----------|
 | `groundspeed` | Volume | `volume × 10` |
 | `satellites` | Speed mode | 0 = disarmed, 1 = slow, 2 = med, 3 = fast |
@@ -304,7 +304,7 @@ The Lua script unpacks them with bitwise AND and right-shift operations. The `al
 
 ### Slot 2 — Flight Mode Frame (Sound Names)
 
-This is how sound and page names are delivered to the Lua dashboard. The Flight Mode frame carries a short string (up to 14 bytes). CHIRP2 formats it as:
+This is how sound and page names are delivered to the Lua dashboard. The Flight Mode frame carries a short string (up to 14 bytes). CHIRP formats it as:
 
 ```
 <bankDigit><pageChar><soundChar><name...>
@@ -328,10 +328,10 @@ The firmware cycles through all banks, pages, and sounds in order, sending one n
 
 ```mermaid
 sequenceDiagram
-    participant FW as CHIRP2 Firmware
+    participant FW as CHIRP Firmware
     participant CRSF as ELRS CRSF Link
     participant TX as EdgeTX Radio
-    participant LUA as CHIRP2.lua Script
+    participant LUA as CHIRP.lua Script
 
     Note over FW: Every 30ms, send next slot
 
@@ -351,13 +351,13 @@ sequenceDiagram
 
 ---
 
-## Lua Telemetry Script (CHIRP2.lua)
+## Lua Telemetry Script (CHIRP.lua)
 
-The EdgeTX Lua script runs on the transmitter and provides two pages of display.
+The EdgeTX Lua script runs on the transmitter and provides three pages of display.
 
 ### Telemetry Sensor Mapping
 
-| EdgeTX Sensor | Source Frame | CHIRP2 Data | Lua Decoding |
+| EdgeTX Sensor | Source Frame | CHIRP Data | Lua Decoding |
 |---------------|-------------|------------|--------------|
 | `RxBt` | Battery `0x08` | Multi-battery voltage | < 1000 → Primary, ≥ 1000 → Secondary − 1000, ≥ 2000 → Tertiary − 2000 |
 | `Curr` | Battery `0x08` | Instantaneous current | Direct (÷10 for amps) |
@@ -378,13 +378,13 @@ The Lua script builds its complete sound name database through this pipeline:
 4. **Lua receives names** → parses the 3-byte header, stores in a local `soundNames[bank][page][sound]` table
 5. **Lua displays names** → maps the Sound Index knob position to the correct sound in the current bank/page and highlights it on screen
 
-The Lua script also caches names to `/SCRIPTS/TELEMETRY/chirp2_cache.txt` so the dashboard populates faster on subsequent boots (before the full telemetry cycle completes).
+The Lua script also caches names to `/SCRIPTS/TELEMETRY/chirp_cache.txt` so the dashboard populates faster on subsequent boots (before the full telemetry cycle completes).
 
 ### Page 1 — Sound Dashboard (Default)
 
 Shows the currently selected sound for each of the 4 banks in a split-screen layout. The Sound Index knob position determines which sound is highlighted in each bank. Sound names update live as telemetry arrives.
 
-### Page 2 — Diagnostics & Configuration
+### Page 2 — Diagnostics
 
 Shows detailed system status:
 - All battery voltages (primary, secondary, tertiary)
@@ -392,8 +392,21 @@ Shows detailed system status:
 - Speed mode, dome position angle
 - Autodome and Autochirp on/off status
 - Link quality
+- Placeholder for future WiFi integration
 
-Configuration options (WiFi enable, Bank 1 page change) are displayed as placeholders — they will become interactive when WiFi support is added in a future phase.
+### Page 3 — Settings
+
+Allows the operator to view and modify system configuration variables directly from the transmitter:
+- Bank 1 Page selection
+- Dome motor parameters (Offset, Invert)
+- Voice Debug toggle
+- Foot drive motor inversion
+- Speed multipliers (Slow, Medium, Fast percentages)
+
+#### Telemetry Backchannel
+
+When a setting is changed, the Lua script sends the new value back to the robot via a CRSF Telemetry Push using a `COMMAND` frame (`0x32`). 
+On the Pico 2W, a custom `CRSFInterceptor` sits between the serial port and the standard CRSF library. It intercepts these `0x32` command packets, verifies their CRC, and updates the `userConfig` structure. The updated configuration is then saved persistently to the Pico's flash memory using the `LittleFS` file system so that settings survive reboots.
 
 ---
 
@@ -453,7 +466,7 @@ When enabled, the robot periodically plays a vocalization:
 
 ## Debug Systems
 
-CHIRP2 has two independent debug systems that can be enabled/disabled separately.
+CHIRP has two independent debug systems that can be enabled/disabled separately.
 
 ### Serial Debug (`DEBUG_ENABLED`)
 
@@ -497,7 +510,7 @@ Example announcements:
 ## File Structure
 
 ```
-CHIRP2/
+CHIRP/
 ├── firmware/
 │   ├── firmware.ino         # Main sketch — setup(), loop(), callbacks
 │   ├── config.h             # Pin definitions, constants, data structures
@@ -511,7 +524,7 @@ CHIRP2/
 │   ├── debug.h/.cpp          # Serial debug system (category filtering)
 │   └── voice_debug.h/.cpp    # Voice debug system (PVOICE phrase queue)
 ├── lua/
-│   └── CHIRP2.lua            # EdgeTX telemetry script (dual-page dashboard)
+│   └── CHIRP.lua            # EdgeTX telemetry script (dual-page dashboard)
 └── README.md                 # This document
 ```
 
