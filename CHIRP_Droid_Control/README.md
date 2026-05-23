@@ -1,6 +1,6 @@
 # CHIRP Droid Control — System Overview
 
-This is control firmware for an R2-D2 style mobile robot. It runs on a **Raspberry Pi Pico 2 W** (RP2350) and is operated remotely via a **Radiomaster Zorro** EdgeTX transmitter (additional transmitter support expected in future) over **ExpressLRS** (ELRS) RC radio link. A companion **Lua telemetry script** on the transmitter provides a live sound dashboard and diagnostics display.
+This is control firmware for an R2-D2 style mobile robot. It runs on a **Raspberry Pi Pico 2 W** (RP2350) and is operated remotely via a **Radiomaster Zorro** EdgeTX transmitter (additional transmitter support expected in future) over **ExpressLRS** or **Crossfire** RC radio link. A companion **Lua telemetry script** on the transmitter provides a live sound dashboard and diagnostics display.
 
 This document describes the complete system architecture, data flows, and design rationale as implemented in the firmware.
 
