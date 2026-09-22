@@ -174,6 +174,7 @@ extern Adafruit_USBD_MSC* usb_msc;
 
 // Legacy Compatibility
 extern bool legacyMonophonic;
+extern bool wdpAnnounce;
 
 // ===================================
 // Flexible Audio Architecture
@@ -414,6 +415,9 @@ bool queueSerial2Message(const char* msg);
 void trySendQueuedMessages(int maxMessages);
 bool isCpuBusy();
 int getQueuedMessageCount();
+
+// from wdp_announce.cpp
+void wdpAnnounceTick();
 
 // from blinkies.cpp
 void initBlinkies();

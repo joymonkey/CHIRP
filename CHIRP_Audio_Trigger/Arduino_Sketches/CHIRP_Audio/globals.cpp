@@ -44,6 +44,9 @@ Adafruit_USBD_MSC* usb_msc = nullptr; // Initialize to null pointer to prevent h
 // Legacy Compatibility
 bool legacyMonophonic = false;
 
+// WCB discovery (WDP device announce), off unless CHIRP.INI sets #WDP_ANNOUNCE 1
+bool wdpAnnounce = false;
+
 
 // ===================================
 // Global Mutex Definitions
