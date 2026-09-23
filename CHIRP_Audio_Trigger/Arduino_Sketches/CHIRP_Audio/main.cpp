@@ -266,7 +266,15 @@ extern volatile uint32_t bufferUnderrunCount;
     // Parse INI file *before* scanning banks
     Serial.println("\n=== Reading CHIRP.INI ===");
     if (sdInitialized) {
+        long bootBaudRate = baudRate;
         parseIniFile();
+        // Serial2 was started at the default rate in step 5, before CHIRP.INI could be read.
+        // Restart it if #BAUD_RATE asked for a different one.
+        if (baudRate != bootBaudRate) {
+            Serial2.end();
+            Serial2.begin(baudRate);
+            Serial.printf("Serial2 baud rate set to %ld from CHIRP.INI\n", baudRate);
+        }
     }
     
     // Check firmware version via LittleFS
