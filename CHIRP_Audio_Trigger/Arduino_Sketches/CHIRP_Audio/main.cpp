@@ -94,6 +94,9 @@
  *   Maximum number of simultaneous audio streams. Increasing this uses more RAM/CPU.
  * #STREAM_BUFFER_SIZE [SMALL, MEDIUM, LARGE or custom number. Default: LARGE (512KB)]
  *   Size of the audio buffer per stream. Use MEDIUM or LARGE for high-bitrate files if you experience stuttering.
+ * #WDP_ANNOUNCE [0 or 1, Default: 0]
+ *   1 = every 25-30 s, send a WDP announce line on the serial control interface so a Wireless Communication
+ *   Board (WCB 6.2+) lists this board on its port. Leave at 0 if the port is not connected to a WCB.
  * 
  */
 
@@ -435,6 +438,9 @@ void loop() {
     // Update Blinkies
     updateRuntimeLEDs();
     
+    // Queue a WDP announce for a connected WCB when due (only if enabled in CHIRP.INI)
+    wdpAnnounceTick();
+
     // Try to send queued Serial2 messages (up to 5 per loop iteration)
     // Only sends when CPU is not busy with MP3 decoding
     trySendQueuedMessages(5);

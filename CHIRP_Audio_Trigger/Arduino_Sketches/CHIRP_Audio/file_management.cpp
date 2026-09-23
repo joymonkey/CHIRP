@@ -128,6 +128,15 @@ bool parseIniFile() {
                         legacyMonophonic = (val == 1);
                     }
                 }
+                // Check WDP_ANNOUNCE
+                else if (strncasecmp(command, "WDP_ANNOUNCE", 12) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' '); // Find first char of value
+                        int val = atoi(value);
+                        wdpAnnounce = (val == 1);
+                    }
+                }
             }
         }
         iniFile.close();
@@ -202,6 +211,7 @@ void writeIniFile() {
         else if (bufKB == 512) iniFile.printf("#STREAM_BUFFER_SIZE LARGE\n");
         else iniFile.printf("#STREAM_BUFFER_SIZE %d\n", bufKB);
         iniFile.printf("#LEGACY_MONOPHONIC %d\n", legacyMonophonic ? 1 : 0);
+        iniFile.printf("#WDP_ANNOUNCE %d\n", wdpAnnounce ? 1 : 0);
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
         iniFile.println("# Do not edit this manually unless you want to force voice feedback.");

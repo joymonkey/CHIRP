@@ -30,6 +30,13 @@ The Prev, Play/Stop and Next buttons act similarly to the navigation buttons of 
  - Hold "Prev" button + press "Next" button - this will change the Sound Bank 1 from its current value (by default "A"). You must have appropriate folders in your SD card for this change to work (for example, "1A_R2D2" and "1B_R5D4").
  - Not a button, but pulling GPIO 7 to ground enables USB Mass Storage Class. 
 
+# WCB Discovery
+If the serial control interface is connected to a [Wireless Communication Board](https://github.com/greghulette/Wireless_Communication_Board-WCB) (WCB 6.2 or later), the CHIRP Audio Trigger can introduce itself to the WCB. Add this line to CHIRP.INI and restart the board:
+
+    #WDP_ANNOUNCE 1
+
+Every 25-30 seconds the board then sends one line, `@WDP1 {"type":"CHIRP Audio Trigger","fw":"<version>",...}`, which the WCB uses to list the board on that port (`?WDP,DA` on the WCB). It is off by default because the line is sent without being asked for; leave it off if the port is connected to anything other than a WCB.
+
 # SD Card Structure
 To simpify browsing of files from the transmitter side of things, sound files should be arranged into several "Sound Banks" on the SD card. 6 Sound Banks are supported, each one can have up to 26 "Pages". Sound Bank 1 is reserved specificalyl for primary droid vocals. Sound Banks 2-6can be for whatever custom music or sound effects are desired.
 ## Sound Bank 1
