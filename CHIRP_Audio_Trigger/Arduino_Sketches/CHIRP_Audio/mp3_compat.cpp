@@ -99,7 +99,10 @@ void action_playPrev() {
     playRootTrack(lastPlayedRootIndex - 1);
 }
 
-void action_playTrackById(int trackNum) {
+void action_playTrackById(int trackNum, Stream* s) {
+    uint32_t triggerSig = (0xFEUL << 24) | ((uint32_t)trackNum & 0xFFFF);
+    if (checkDoubleTapSilence(s, triggerSig)) return;
+
     // trackNum is 1-based (e.g. 1 -> "001.MP3")
     char prefix[8];
     snprintf(prefix, sizeof(prefix), "%03d", trackNum); // "001"
@@ -140,7 +143,10 @@ void action_playTrackById(int trackNum) {
     Serial.printf("COMPAT: Track ID %d not found in root or Bank 1.\n", trackNum);
 }
 
-void action_playTrackByIndex(int trackIndex) {
+void action_playTrackByIndex(int trackIndex, Stream* s) {
+    uint32_t triggerSig = (0xFDUL << 24) | ((uint32_t)trackIndex & 0xFFFF);
+    if (checkDoubleTapSilence(s, triggerSig)) return;
+
     // trackIndex is raw 1-based index from 'p' command
     if (trackIndex >= 1 && trackIndex <= rootTrackCount) {
         playRootTrack(trackIndex - 1);
@@ -196,11 +202,11 @@ bool checkAndHandleMp3Command(Stream &s, uint8_t byte, int cmdPos) {
             state = PARSER_IDLE;
             switch (pending) {
                 case PARSER_WAIT_T_BINARY:
-                    action_playTrackById((int)byte);
+                    action_playTrackById((int)byte, &s);
                     return true;
                 case PARSER_WAIT_T_ASCII:
                     if (byte >= '0' && byte <= '9') {
-                        action_playTrackById(byte - '0');
+                        action_playTrackById(byte - '0', &s);
                         return true;
                     }
                     return false;
@@ -208,7 +214,7 @@ bool checkAndHandleMp3Command(Stream &s, uint8_t byte, int cmdPos) {
                     action_setSparkfunVolume(byte);
                     return true;
                 case PARSER_WAIT_P_BINARY:
-                    action_playTrackByIndex((int)byte);
+                    action_playTrackByIndex((int)byte, &s);
                     return true;
                 default:
                     return false;

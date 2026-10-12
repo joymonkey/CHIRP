@@ -89,6 +89,10 @@
  * #LEGACY_MONOPHONIC [0 or 1, Default: 0]
  *   Controls behavior of legacy MP3 Trigger commands. 0 = Polyphonic (sounds mix). 1 = Monophonic (stop & play).
  * (Note: #USE_FLASH_BANK1 is deprecated; all Bank 1 audio streams directly from SD card)
+ * #DOUBLE_TAP_TIMEOUT [Milliseconds, Default: 600, 0 = Disabled]
+ *   Quickly tapping a trigger button twice within this window silences all playing streams.
+ * #DOUBLE_TAP_MATCH [0 or 1, Default: 0]
+ *   0 = Any two play commands silence (Mode A, default). 1 = Requires identical sound trigger/command to silence (Mode B).
  * #MAX_STREAMS [1-10, Default: 3]
  *   Maximum number of simultaneous audio streams. Increasing this uses more RAM/CPU.
  * #STREAM_BUFFER_SIZE [SMALL, MEDIUM, LARGE or custom number. Default: LARGE (512KB)]
@@ -281,6 +285,12 @@ extern volatile uint32_t bufferUnderrunCount;
     Serial.printf("INI Parse Result: fwUpdated=%s, activePage=%c\n", 
                   fwUpdated ? "TRUE" : "FALSE", activeBank1Page);
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
+    if (doubleTapTimeoutMs > 0) {
+        Serial.printf("Double-Tap Silence: ENABLED (Timeout: %u ms, Mode: %s)\n",
+                      doubleTapTimeoutMs, doubleTapMatchOnly ? "MATCH" : "ANY");
+    } else {
+        Serial.println("Double-Tap Silence: DISABLED");
+    }
 
     // Initialize Audio System
     initAudioSystem(); // Uses maxStreams set by parseIniFile

@@ -113,6 +113,14 @@ void handlePlay(Stream &serial, char* args) {
 
     int volume = parseArgInt(ptr, -1); // Default -1 (Current)
     
+    // Check for Double-Tap Silence gesture
+    uint32_t triggerSig = ((uint32_t)(bank & 0xFF) << 24) |
+                          ((uint32_t)(page & 0xFF) << 16) |
+                          ((uint32_t)index & 0xFFFF);
+    if (checkDoubleTapSilence(&serial, triggerSig)) {
+        return;
+    }
+
     int stream = getNextAvailableStream();
     if (stream < 0 || stream >= maxStreams) {
         serial.println("ERR:PARAM - Invalid stream");
@@ -187,11 +195,7 @@ void handlePlay(Stream &serial, char* args) {
 void handleStop(Stream &serial, char* args) {
     if (args[0] == '\0' || args[0] == '*') {
         // Stop all
-        for (int i = 0; i < maxStreams; i++) {
-            stopStream(i);
-            sendSerialResponse(serial, "PACK:STOP");
-            sendSerialResponseF(serial, "S:%d,idle,,0", i);
-        }
+        stopAllStreams(&serial);
     } else {
         int stream = atoi(args);
         if (stream >= 0 && stream < maxStreams) {

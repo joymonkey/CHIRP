@@ -173,6 +173,11 @@ extern Adafruit_USBD_MSC *usb_msc;
 // Legacy Compatibility
 extern bool legacyMonophonic;
 
+// Double-Tap Silence Configuration
+#define DEFAULT_DOUBLE_TAP_TIMEOUT_MS 600
+extern uint16_t doubleTapTimeoutMs;
+extern bool doubleTapMatchOnly;
+
 // ===================================
 // Flexible Audio Architecture
 // ===================================
@@ -379,6 +384,8 @@ extern bool *aacDecoderInUse;
 // from serial_commands.cpp
 void log_message(const String &msg);
 void processSerialCommands(Stream &serial); // Dual-buffer fix
+void sendSerialResponse(Stream &serial, const char *msg);
+void sendSerialResponseF(Stream &serial, const char *format, ...);
 
 // from file_management.cpp
 bool parseIniFile();
@@ -408,16 +415,18 @@ void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void *
 bool startStream(int streamIdx, const char *filename);
 bool startProgmemStream(int streamIdx, const uint8_t *data, size_t size);
 void stopStream(int streamIdx);
+void stopAllStreams(Stream *replySerial = nullptr);
+bool checkDoubleTapSilence(Stream *replySerial, uint32_t triggerSignature);
 void fillStreamBuffers(); // Main loop task
 void initAudioSystem();
 void playChirp(int startFreq, int endFreq, int durationMs, uint8_t vol);
 
-// from serial_commands.cpp (MP3 Trigger Compat)
+// from mp3_compat.cpp (MP3 Trigger Compat)
 void action_togglePlayPause();
 void action_playNext();
 void action_playPrev();
-void action_playTrackById(int trackNum);
-void action_playTrackByIndex(int trackIndex);
+void action_playTrackById(int trackNum, Stream *s = nullptr);
+void action_playTrackByIndex(int trackIndex, Stream *s = nullptr);
 void action_setSparkfunVolume(uint8_t sfVol);
 bool checkAndHandleMp3Command(Stream &s, uint8_t firstByte, int cmdPos = 0);
 

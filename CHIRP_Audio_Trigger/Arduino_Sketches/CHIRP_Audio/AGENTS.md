@@ -92,7 +92,7 @@ LEDs → USB Serial / Serial2 → SPI1 pins → buttons, MSC pin → Serial2 que
 - **Banks 2–6** (`2_Name` or `2B_Name`): flat file lists in `SDBank` (max `MAX_SD_BANKS`=20 dirs, `MAX_FILES_PER_BANK`=100, names < 64 chars). Order = SdFat directory order (not sorted).
 - **Root tracks**: audio files in SD root, sorted alphabetically, names up to 63 chars (`MAX_ROOT_TRACK_NAME_LEN 64`), used by legacy commands and buttons.
 - **Manifest checksum**: CRC32 of all Bank 1 variant names + Bank 2–6 filenames, reported in `GMAN` as `MSUM` so the host can detect changes.
-- **CHIRP.INI** (SD root, lines starting with `#KEY value`): `BANK1_PAGE`, `BAUD_RATE`, `MAX_STREAMS` (1–10), `STREAM_BUFFER_SIZE` (SMALL/MEDIUM/LARGE/KB, rounded down to power of 2, 32–4096), `LEGACY_MONOPHONIC`, `VERSION`. `writeIniFile()` regenerates the whole file — if you add a key, add it to **both** parse and write.
+- **CHIRP.INI** (SD root, lines starting with `#KEY value`): `BANK1_PAGE`, `BAUD_RATE`, `MAX_STREAMS` (1–10), `STREAM_BUFFER_SIZE` (SMALL/MEDIUM/LARGE/KB, rounded down to power of 2, 32–4096), `LEGACY_MONOPHONIC`, `DOUBLE_TAP_TIMEOUT`, `DOUBLE_TAP_MATCH`, `VERSION`. `writeIniFile()` regenerates the whole file — if you add a key, add it to **both** parse and write.
 
 ## 6. Serial protocol
 

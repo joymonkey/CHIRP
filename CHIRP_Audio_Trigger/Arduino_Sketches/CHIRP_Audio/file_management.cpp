@@ -119,6 +119,37 @@ bool parseIniFile() {
                         legacyMonophonic = (val == 1);
                     }
                 }
+                // Check DOUBLE_TAP_TIMEOUT
+                else if (strncasecmp(command, "DOUBLE_TAP_TIMEOUT", 18) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        int val = atoi(value);
+                        if (val >= 0 && val <= 5000) {
+                            doubleTapTimeoutMs = (uint16_t)val;
+                        }
+                    }
+                }
+                // Check DOUBLE_TAP_MATCH
+                else if (strncasecmp(command, "DOUBLE_TAP_MATCH", 16) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        int val = atoi(value);
+                        doubleTapMatchOnly = (val != 0);
+                    }
+                }
+                // Check DOUBLE_TAP_ENABLE (0 to disable)
+                else if (strncasecmp(command, "DOUBLE_TAP_ENABLE", 17) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        int val = atoi(value);
+                        if (val == 0) {
+                            doubleTapTimeoutMs = 0;
+                        }
+                    }
+                }
             }
         }
         iniFile.close();
@@ -192,6 +223,8 @@ void writeIniFile() {
         else if (bufKB == 512) iniFile.printf("#STREAM_BUFFER_SIZE LARGE\n");
         else iniFile.printf("#STREAM_BUFFER_SIZE %d\n", bufKB);
         iniFile.printf("#LEGACY_MONOPHONIC %d\n", legacyMonophonic ? 1 : 0);
+        iniFile.printf("#DOUBLE_TAP_TIMEOUT %u\n", doubleTapTimeoutMs);
+        iniFile.printf("#DOUBLE_TAP_MATCH %d\n", doubleTapMatchOnly ? 1 : 0);
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
         iniFile.println("# Do not edit this manually unless you want to force voice feedback.");

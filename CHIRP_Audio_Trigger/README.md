@@ -42,6 +42,29 @@ The Prev, Play/Stop and Next buttons act similarly to the navigation buttons of 
  - Hold "Prev" button + press "Next" button - this will change the Sound Bank 1 from its current value (by default "A"). You must have appropriate folders in your SD card for this change to work (for example, "1A_R2D2" and "1B_R5D4").
  - Not a button, but pulling GPIO 7 to ground enables USB Mass Storage Class. 
 
+# Double-Tap to Silence
+Because CHIRP is polyphonic, triggering multiple sounds in fast succession can cause audio to overlap. To provide a universal, immediate way to silence the player from any transmitter or control system (without needing a dedicated stop button mapped on the transmitter):
+- **Double-Tap Gesture:** Tapping a sound trigger twice quickly (within 600 ms by default) stops all active streams immediately.
+- **Configurable via CHIRP.INI:**
+  - `#DOUBLE_TAP_TIMEOUT 600` : Window in milliseconds to detect a double-tap (default 600 ms; set to `0` to disable).
+  - `#DOUBLE_TAP_MATCH 0` : Mode selection. `0` (default) allows any two play commands in fast succession to trigger silence (recommended for control systems that randomize tracks). `1` requires double-tapping the exact same sound trigger to silence.
+
+# Configuration via CHIRP.INI
+The `CHIRP.INI` file is stored in the root directory of the SD card and allows customizing the firmware's audio engine, communication interfaces, and playback behavior without needing to recompile code. If `CHIRP.INI` is not present, the firmware will automatically generate one using default values upon boot.
+
+Lines in `CHIRP.INI` begin with `#KEY <value>`. The following options are supported:
+
+| Key | Options / Values | Default | Description |
+|---|---|---|---|
+| `#BANK1_PAGE` | `A`–`Z` | `A` | Selects which Sound Bank 1 folder page is active for primary droid vocals (e.g. `A` for `1A_R2D2`, `B` for `1B_R5D4`). *(Legacy alias: `#BANK1_VARIANT`)* |
+| `#BAUD_RATE` | `2400`, `9600`, `19200`, `38400`, `57600`, `115200` | `115200` | Sets the hardware serial baud rate for `Serial2` (the main microcontroller/radio UART interface). |
+| `#MAX_STREAMS` | `1`–`10` | `3` | Maximum number of simultaneous audio streams mixed together. Higher counts allow more overlapping tracks but use more PSRAM and CPU time. |
+| `#STREAM_BUFFER_SIZE` | `SMALL`, `MEDIUM`, `LARGE`, or KB (`32`–`4096`) | `LARGE` (512 KB) | Ring buffer allocation in PSRAM per audio stream (`SMALL` = 128 KB, `MEDIUM` = 256 KB, `LARGE` = 512 KB). Larger buffers prevent underruns on high-bitrate files or slower SD cards. |
+| `#LEGACY_MONOPHONIC` | `0` or `1` | `0` | Controls playback behavior for legacy SparkFun/Robertsonics MP3 Trigger serial commands (`t`, `T`, `p`, etc.). `0` = Polyphonic (sounds mix across streams). `1` = Monophonic (new sound stops existing playback, mimicking original single-stream MP3 Trigger hardware). |
+| `#DOUBLE_TAP_TIMEOUT` | Milliseconds (`0`–`5000`) | `600` | Window in milliseconds to detect a double-tap gesture to stop all audio streams. Set to `0` to disable double-tap silencing entirely. *(Convenience alias: `#DOUBLE_TAP_ENABLE 0`)* |
+| `#DOUBLE_TAP_MATCH` | `0` or `1` | `0` | Double-tap matching mode. `0` = Mode A (any two play commands in fast succession stop playback; ideal for transmitters that randomize vocal tracks). `1` = Mode B (only identical sound triggers stop playback). |
+| `#VERSION` | Date string (e.g. `20261012`) | Auto-managed | Tracks the firmware version that last booted with the card. If updated firmware is detected, CHIRP speaks a voice notification on boot. Do not edit manually unless forcing voice feedback. |
+
 # SD Card Structure
 To simplify browsing of files from the transmitter side of things, sound files should be arranged into several "Sound Banks" on the SD card. 6 Sound Banks are supported, each one can have up to 26 "Pages". Sound Bank 1 is reserved specifically for primary droid vocals. Sound Banks 2-6 can be for whatever custom music or sound effects are desired. All audio streams directly from the SD card into high-speed PSRAM buffers with near-zero latency, allowing immediate playback without flash syncing delays.
 

@@ -18,7 +18,7 @@ SoundFile bank1Sounds[MAX_SOUNDS];
 int bank1SoundCount = 0;
 char bank1DirName[64] = "";
 
-char activeBank1Page = 'A'; 
+char activeBank1Page = 'A';
 char validBank1Pages[27] = "A"; // Default to just A
 int validBank1PageCount = 1;
 
@@ -39,11 +39,14 @@ uint32_t globalFilenameChecksum = 0;
 
 // MSC State
 volatile bool g_mscActive = false;
-Adafruit_USBD_MSC* usb_msc = nullptr; // Initialize to null pointer to prevent hangup on start
+Adafruit_USBD_MSC *usb_msc = nullptr; // Initialize to null pointer to prevent hangup on start
 
 // Legacy Compatibility
 bool legacyMonophonic = false;
 
+// Double-Tap Silence Configuration
+uint16_t doubleTapTimeoutMs = DEFAULT_DOUBLE_TAP_TIMEOUT_MS;
+bool doubleTapMatchOnly = false; // <-- Change to false for Mode A (any play command in quick succession triggers a stop) or true for Mode B (only identical play commands in quick succession trigger a stop)
 
 // ===================================
 // Global Mutex Definitions
@@ -55,7 +58,8 @@ __attribute__((section(".mutex_array"))) mutex_t log_mutex;
 // ===================================
 // Logging Helper
 // ===================================
-void log_message(const String& msg) {
+void log_message(const String &msg)
+{
     mutex_enter_blocking(&log_mutex);
     Serial.println(msg);
     mutex_exit(&log_mutex);

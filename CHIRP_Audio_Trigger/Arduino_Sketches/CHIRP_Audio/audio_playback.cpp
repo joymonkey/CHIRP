@@ -1204,3 +1204,62 @@ void stopStream(int streamIdx) {
     uint32_t duration = millis() - s->startTime;
     log_message(String("Stream ") + streamIdx + ": Stopped (Duration: " + duration + "ms)");
 }
+
+// ===================================
+// Double-Tap Silence & Stop All
+// ===================================
+
+static unsigned long lastPlayTriggerTime = 0;
+static uint32_t lastPlayTriggerSignature = 0;
+static unsigned long silenceCooldownUntil = 0;
+
+void stopAllStreams(Stream* replySerial) {
+    if (!streams) return;
+
+    for (int i = 0; i < maxStreams; i++) {
+        stopStream(i);
+        if (replySerial) {
+            sendSerialResponse(*replySerial, "PACK:STOP");
+            sendSerialResponseF(*replySerial, "S:%d,idle,,0", i);
+        }
+    }
+
+    // Reset double-tap timing state
+    lastPlayTriggerTime = 0;
+    lastPlayTriggerSignature = 0;
+}
+
+bool checkDoubleTapSilence(Stream* replySerial, uint32_t triggerSignature) {
+    if (doubleTapTimeoutMs == 0) {
+        return false;
+    }
+
+    unsigned long now = millis();
+
+    // If we recently triggered silence, ignore triggers during cooldown
+    if (now < silenceCooldownUntil) {
+        Serial.printf("[TAP] Ignored during silence cooldown (%lu ms remaining)\n", silenceCooldownUntil - now);
+        return true;
+    }
+
+    unsigned long dt = (lastPlayTriggerTime > 0) ? (now - lastPlayTriggerTime) : 99999;
+
+    Serial.printf("[TAP] Sig: 0x%08lX | dt: %lu ms (Window: <= %u ms, Mode: %s)\n",
+                  triggerSignature, dt, doubleTapTimeoutMs,
+                  doubleTapMatchOnly ? "MATCH" : "ANY");
+
+    if (lastPlayTriggerTime > 0 && dt <= doubleTapTimeoutMs) {
+        if (!doubleTapMatchOnly || (triggerSignature == lastPlayTriggerSignature)) {
+            Serial.printf(">>> DOUBLE-TAP SILENCE TRIGGERED! (dt=%lu ms) <<<\n", dt);
+            stopAllStreams(replySerial);
+            silenceCooldownUntil = now + 400; // 400ms cooldown against rapid re-triggering
+            return true;
+        } else {
+            Serial.println("[TAP] Rejected: Signatures did not match (Mode B)");
+        }
+    }
+
+    lastPlayTriggerTime = now;
+    lastPlayTriggerSignature = triggerSignature;
+    return false;
+}
