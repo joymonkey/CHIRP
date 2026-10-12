@@ -73,6 +73,14 @@ bool* mp3DecoderInUse = nullptr;
 // Context for the callback (since library doesn't pass user data through write)
 volatile int currentDecodingStream = -1;
 
+// Helper subclass to expose protected setMinFrameBufferSize from CommonHelix
+class AccessibleMP3Decoder : public MP3DecoderHelix {
+public:
+    void setMinFrameBufferSizePublic(int size) {
+        setMinFrameBufferSize(size);
+    }
+};
+
 // AAC Globals
 AACDecoderHelix** aacDecoders = nullptr;
 bool* aacDecoderInUse = nullptr;
@@ -300,50 +308,47 @@ void fillStreamBuffers() {
 
         } else if (s->type == STREAM_TYPE_MP3_PROGMEM) {
             // --- MP3 (PROGMEM / Memory) ---
-            if (available > 16000) {  // Require 16,000 samples of empty space before feeding the decoder to absorb massive 11025Hz/22050Hz upsample bursts
-                uint8_t mp3Buf[128];  // Feed 128 bytes at a time (enough to parse quickly but not overwhelm)
-                int bytesRead = 0;
+            if (available > 16000) {  // Require 16,000 samples of empty space before feeding the decoder
+                uint8_t mp3Buf[128];
+                int bytesToFeed = 0;
                 
-                if (s->progmemData) {
-                    size_t remaining = s->progmemSize - s->progmemPos;
-                    if (remaining > 0) {
-                        bytesRead = (remaining > sizeof(mp3Buf)) ? sizeof(mp3Buf) : remaining;
-                        memcpy(mp3Buf, s->progmemData + s->progmemPos, bytesRead);
-                        s->progmemPos += bytesRead;
-                    }
-                    // Check if we just consumed the last chunk
-                    if (s->progmemPos >= s->progmemSize) {
-                        // All PROGMEM bytes have been fed to the decoder.
-                        // CRITICAL: The decoder buffers data internally and only decodes
-                        // when it has a complete frame. We MUST flush it now to squeeze
-                        // out any remaining PCM data before we set fileFinished,
-                        // otherwise fillStreamBuffers will skip this stream forever
-                        // (due to the `if (fileFinished) continue;` check at the top)
-                        // and the last 40-60% of the audio will be silently lost.
-                        if (bytesRead > 0 && s->decoderIndex != -1) {
-                            currentDecodingStream = i;
-                            mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
-                            mp3Decoders[s->decoderIndex]->flush();
-                            currentDecodingStream = -1;
-                            bytesRead = 0; // Already handled
-                        } else if (s->decoderIndex != -1) {
-                            currentDecodingStream = i;
-                            mp3Decoders[s->decoderIndex]->flush();
-                            currentDecodingStream = -1;
+                // Add 1024 trailing bytes of padding to push all buffered frames through the decoder pipeline
+                size_t totalStreamSize = s->progmemSize + 1024;
+                
+                if (s->progmemData && s->progmemPos < totalStreamSize) {
+                    size_t remaining = totalStreamSize - s->progmemPos;
+                    bytesToFeed = (remaining > sizeof(mp3Buf)) ? sizeof(mp3Buf) : remaining;
+                    
+                    if (s->progmemPos < s->progmemSize) {
+                        // Data from PROGMEM (or partial real data + trailing zero padding)
+                        size_t realBytes = s->progmemSize - s->progmemPos;
+                        if (realBytes >= (size_t)bytesToFeed) {
+                            memcpy(mp3Buf, s->progmemData + s->progmemPos, bytesToFeed);
+                        } else {
+                            memcpy(mp3Buf, s->progmemData + s->progmemPos, realBytes);
+                            memset(mp3Buf + realBytes, 0, bytesToFeed - realBytes);
                         }
-                        s->fileFinished = true;
+                    } else {
+                        // Trailing zero padding to flush remaining frames through decoder
+                        memset(mp3Buf, 0, bytesToFeed);
                     }
+                    
+                    s->progmemPos += bytesToFeed;
                 } else {
                     s->fileFinished = true;
                 }
                 
-                if (bytesRead > 0 && s->decoderIndex != -1) {
+                if (bytesToFeed > 0 && s->decoderIndex != -1) {
                     currentDecodingStream = i;
-                    int consumed = mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesRead);
+                    int consumed = mp3Decoders[s->decoderIndex]->write(mp3Buf, bytesToFeed);
                     currentDecodingStream = -1;
                     
-                    if (consumed >= 0 && consumed < bytesRead) {
-                        s->progmemPos -= (bytesRead - consumed);
+                    if (consumed >= 0 && consumed < bytesToFeed) {
+                        s->progmemPos -= (bytesToFeed - consumed);
+                    }
+                    
+                    if (s->progmemPos >= totalStreamSize) {
+                        s->fileFinished = true;
                     }
                 }
             }
@@ -864,7 +869,10 @@ bool startStream(int streamIdx, const char* filename) {
                 }
                 if (decoderIdx != -1) {
                     s->type = STREAM_TYPE_MP3_FLASH;
-                    if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+                    if (mp3Decoders[decoderIdx]) {
+                        mp3Decoders[decoderIdx]->begin();
+                        reinterpret_cast<AccessibleMP3Decoder*>(mp3Decoders[decoderIdx])->setMinFrameBufferSizePublic(MP3_MIN_FRAME_SIZE);
+                    }
                 }
             } else {
                  for (int i = 0; i < maxMp3Decoders; i++) {
@@ -995,7 +1003,10 @@ bool startStream(int streamIdx, const char* filename) {
             s->decoderIndex = decoderIdx;
             
             if (format == FORMAT_MP3) {
-                 if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+                 if (mp3Decoders[decoderIdx]) {
+                     mp3Decoders[decoderIdx]->begin();
+                     reinterpret_cast<AccessibleMP3Decoder*>(mp3Decoders[decoderIdx])->setMinFrameBufferSizePublic(MP3_MIN_FRAME_SIZE);
+                 }
             } else {
                  if (aacDecoders[decoderIdx]) aacDecoders[decoderIdx]->begin();
             }
@@ -1112,7 +1123,10 @@ bool startProgmemStream(int streamIdx, const uint8_t* data, size_t size) {
     
     if (decoderIdx != -1) {
         s->type = STREAM_TYPE_MP3_PROGMEM;
-        if (mp3Decoders[decoderIdx]) mp3Decoders[decoderIdx]->begin();
+        if (mp3Decoders[decoderIdx]) {
+            mp3Decoders[decoderIdx]->begin();
+            reinterpret_cast<AccessibleMP3Decoder*>(mp3Decoders[decoderIdx])->setMinFrameBufferSizePublic(64);
+        }
     } else {
         log_message(String("Stream ") + streamIdx + ": ERROR - No MP3 decoders available for PROGMEM");
         return false;

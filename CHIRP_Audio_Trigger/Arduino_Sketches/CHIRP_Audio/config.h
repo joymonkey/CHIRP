@@ -14,27 +14,26 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20260308"
-//#define DEBUG // Comment out to disable debug logging
+#define VERSION_STRING "20261012"
+// #define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
-#define SD_CS   13
+#define SD_CS 13
 #define SD_MISO 12
 #define SD_MOSI 15
-#define SD_SCK  14
+#define SD_SCK 14
 // Board Revision Selection
 #define BOARD_REV_B // Uncomment for Rev.B boards (optimized for new hardware)
 
 #ifdef BOARD_REV_B
-  #define I2S_MUTE_PIN 8 // Rev.B PCB: Pin 8 is Mute. (PSRAM CS is Pin 0)
+#define I2S_MUTE_PIN 8 // Rev.B PCB: Pin 8 is Mute. (PSRAM CS is Pin 0)
 #endif
 // Rev.A PCB notes: Pin 8 is PSRAM CS, so I2S_MUTE_PIN must NOT be defined as 8 if we're compiling for a Rev.A board.
 
-#define MUTE_DURING_SYNC // Enable muting during SD->Flash sync (Hardware Mute on Rev.B, Software Mute on Rev.A)
 #define I2S_BCLK 9
 #define I2S_LRCK 10
 #define I2S_DATA 11
-#define NEOPIXEL_PIN 19 //CHIRP Audio Trigger PCB has 3 neopixels on pin 19
+#define NEOPIXEL_PIN 19   // CHIRP Audio Trigger PCB has 3 neopixels on pin 19
 #define PIN_MSC_TRIGGER 7 // Pull low to enable MSC mode
 
 // UART Pins (Serial2)
@@ -46,10 +45,8 @@ using namespace libhelix;
 #define PIN_BTN_FWD 16 // Next
 #define PIN_BTN_REV 18 // Prev
 
-// Development Mode
-#define DEV_MODE true
-#define DEV_SYNC_LIMIT 100
-#define FORMAT_FLASH false
+// Flash Maintenance (LittleFS is only used for firmware version tracking)
+// #define FORMAT_FLASH // Uncomment to force format LittleFS flash on boot
 
 // Audio Configuration
 #define SAMPLE_RATE 44100
@@ -68,7 +65,8 @@ using namespace libhelix;
 // ===================================
 // Struct Definitions
 // ===================================
-struct WAVHeader {
+struct WAVHeader
+{
     char riff[4];
     uint32_t fileSize;
     char wave[4];
@@ -84,14 +82,16 @@ struct WAVHeader {
     uint32_t dataSize;
 };
 
-struct SoundFile {
+struct SoundFile
+{
     char basename[16];
     char variants[25][32];
     int variantCount;
     int lastVariantPlayed; // For non-repeating random
 };
 
-struct SDBank {
+struct SDBank
+{
     uint8_t bankNum;
     char page;
     char dirName[32];
@@ -99,12 +99,14 @@ struct SDBank {
     int fileCount;
 };
 
-struct SerialMessage {
+struct SerialMessage
+{
     char buffer[SERIAL2_MSG_MAX_LENGTH];
     uint8_t length;
 };
 
-struct SerialQueue {
+struct SerialQueue
+{
     SerialMessage messages[SERIAL2_QUEUE_SIZE];
     volatile int readPos;
     volatile int writePos;
@@ -125,25 +127,21 @@ extern mutex_t sd_mutex;
 extern mutex_t flash_mutex;
 extern mutex_t log_mutex;
 
-
-
-
 // Bank File Lists
 extern SoundFile bank1Sounds[MAX_SOUNDS];
 extern int bank1SoundCount;
-extern char bank1DirName[64]; 
+extern char bank1DirName[64];
 
 extern char activeBank1Page;
 extern char validBank1Pages[27];
 extern int validBank1PageCount;
 extern SDBank sdBanks[MAX_SD_BANKS];
 extern int sdBankCount;
-extern bool useFlashForBank1;
-
 
 // Root Tracks (Legacy Compatibility)
 #define MAX_ROOT_TRACKS 255
-extern char rootTracks[MAX_ROOT_TRACKS][16]; // "NNN.MP3"
+#define MAX_ROOT_TRACK_NAME_LEN 64
+extern char rootTracks[MAX_ROOT_TRACKS][MAX_ROOT_TRACK_NAME_LEN]; // "NNN.MP3"
 extern int rootTrackCount;
 
 // Test Tone State
@@ -154,7 +152,7 @@ extern volatile int16_t masterAttenMultiplier;
 #define PHASE_INCREMENT ((uint32_t)TEST_TONE_FREQ << 16) / SAMPLE_RATE
 
 // MP3 Decoder
-extern MP3DecoderHelix* mp3Decoder;
+extern MP3DecoderHelix *mp3Decoder;
 
 // Configuration
 extern long baudRate;
@@ -170,7 +168,7 @@ extern volatile bool g_allowAudio;
 
 // MSC State
 extern volatile bool g_mscActive;
-extern Adafruit_USBD_MSC* usb_msc;
+extern Adafruit_USBD_MSC *usb_msc;
 
 // Legacy Compatibility
 extern bool legacyMonophonic;
@@ -185,9 +183,10 @@ extern int maxMp3Decoders;
 extern int streamBufferSize; // Size in SAMPLES (not bytes)
 extern int streamBufferMask; // Mask for bitwise wrapping (size - 1)
 
-enum StreamType {
+enum StreamType
+{
     STREAM_TYPE_INACTIVE = 0,
-    STREAM_TYPE_WAV_FLASH, 
+    STREAM_TYPE_WAV_FLASH,
     STREAM_TYPE_WAV_SD,
     STREAM_TYPE_MP3_SD,
     STREAM_TYPE_MP3_FLASH,
@@ -198,7 +197,8 @@ enum StreamType {
     STREAM_TYPE_M4A_FLASH
 };
 
-enum AudioFormat {
+enum AudioFormat
+{
     FORMAT_UNKNOWN = 0,
     FORMAT_WAV,
     FORMAT_MP3,
@@ -207,50 +207,62 @@ enum AudioFormat {
     FORMAT_OGG
 };
 
-struct RingBuffer {
-    int16_t* buffer; // Pointer to PSRAM
+struct RingBuffer
+{
+    int16_t *buffer; // Pointer to PSRAM
     volatile int readPos;
     volatile int writePos;
     int bufferMask;
-    
+
     // Helper to get available write space
-    int availableForWrite() {
-        if (!buffer) return 0;
+    int availableForWrite()
+    {
+        if (!buffer)
+            return 0;
         int currentLevel = (writePos - readPos + (bufferMask + 1)) & bufferMask;
         return bufferMask - currentLevel;
     }
-    
+
     // Helper to get available samples to read
-    int availableForRead() {
-        if (!buffer) return 0;
+    int availableForRead()
+    {
+        if (!buffer)
+            return 0;
         return (writePos - readPos + (bufferMask + 1)) & bufferMask;
     }
-    
-    bool push(int16_t sample) {
-        if (!buffer) return false;
-        
+
+    bool push(int16_t sample)
+    {
+        if (!buffer)
+            return false;
+
         int nextWrite = (writePos + 1) & bufferMask;
-        if (nextWrite == readPos) {
+        if (nextWrite == readPos)
+        {
             // Buffer Full - Drop sample
             return false;
         }
-        
+
         buffer[writePos] = sample;
         writePos = nextWrite;
         return true;
     }
-    
-    int16_t pop() {
-        if (!buffer) return 0;
+
+    int16_t pop()
+    {
+        if (!buffer)
+            return 0;
         int16_t sample = buffer[readPos];
         readPos = (readPos + 1) & bufferMask;
         return sample;
     }
-    
-    void clear() {
+
+    void clear()
+    {
         readPos = 0;
         writePos = 0;
-        if (buffer) {
+        if (buffer)
+        {
             // Optional: memset(buffer, 0, streamBufferSize * sizeof(int16_t));
         }
     }
@@ -259,61 +271,62 @@ struct RingBuffer {
 // ===================================
 // MP4/M4A Parser Class
 // ===================================
-class MP4Parser {
+class MP4Parser
+{
 public:
     MP4Parser();
-    bool open(const char* filename, bool isFlash);
+    bool open(const char *filename, bool isFlash);
     void close();
-    size_t readNextFrame(uint8_t* buffer, size_t bufferSize);
-    
+    size_t readNextFrame(uint8_t *buffer, size_t bufferSize);
+
     // Config getters
     uint32_t getSampleRate() { return sampleRate; }
     uint8_t getChannels() { return channels; }
-    
+
 private:
     // Files
     File flashFile;
     FsFile sdFile;
     bool usingFlash;
-    
+
     // Structure Offsets
     uint32_t stszOffset;
     uint32_t stcoOffset;
     uint32_t stscOffset;
     uint32_t mdatOffset;
-    
+
     // Track Info
     uint32_t sampleRate;
     uint8_t channels;
     uint8_t objectType; // for ADTS
-    
+
     // Playback State
     uint32_t currentSample;
     uint32_t totalSamples;
-    
+
     // Chunk State
     uint32_t currentChunk;
     uint32_t samplesInCurrentChunk;
     uint32_t samplesReadInChunk;
     uint32_t currentOffset; // Absolute file offset
-    
+
     // STSC Cursor (to know when samplesPerChunk changes)
     uint32_t stscCount;
-    uint32_t stscIndex; 
+    uint32_t stscIndex;
     uint32_t nextChunkRunStart;
-    
+
     // Data Widths
     uint8_t stszSampleSize; // 0 if variable
-    
+
     // Helpers
     uint32_t readUI32BE(File &f);
     uint32_t readUI32BE(FsFile &f);
     uint32_t readUI32BE(); // wrappers that use active file
     void seek(uint32_t pos);
-    void read(uint8_t* buf, size_t len);
+    void read(uint8_t *buf, size_t len);
     uint32_t getPos();
-    
-    bool findAtom(const char* atomName, uint32_t &atomSize, uint32_t limit);
+
+    bool findAtom(const char *atomName, uint32_t &atomSize, uint32_t limit);
     bool parseMoov(uint32_t atomSize);
     bool parseTrak(uint32_t atomSize);
     bool parseMdhd(uint32_t atomSize);
@@ -321,49 +334,50 @@ private:
     bool parseStsd(uint32_t atomSize);
 };
 
-struct AudioStream {
+struct AudioStream
+{
     bool active;
     StreamType type;
-    float volume; // 0.0 to 1.0
+    float volume;     // 0.0 to 1.0
     int decoderIndex; // -1 if not using MP3/AAC decoder
-    
+
     // File Handles
     File flashFile; // For LittleFS
     FsFile sdFile;  // For SdFat
-    
+
     // MP4 Parser
     MP4Parser mp4Parser;
-    
+
     // PROGMEM Data Variables
-    const uint8_t* progmemData;
+    const uint8_t *progmemData;
     size_t progmemSize;
     size_t progmemPos;
-    
+
     // Buffer
-    RingBuffer* ringBuffer;
-    
+    RingBuffer *ringBuffer;
+
     // State
     char filename[64];
     bool stopRequested;
     bool fileFinished;
-    uint8_t channels; // 1 = Mono, 2 = Stereo
+    uint8_t channels;    // 1 = Mono, 2 = Stereo
     uint32_t sampleRate; // Source sample rate (e.g. 44100 or 22050)
-    uint32_t startTime; // Debug timestamp
+    uint32_t startTime;  // Debug timestamp
 };
 
-extern AudioStream* streams;
-extern RingBuffer* streamBuffers;
-extern MP3DecoderHelix** mp3Decoders;
-extern bool* mp3DecoderInUse;
-extern AACDecoderHelix** aacDecoders;
-extern bool* aacDecoderInUse;
+extern AudioStream *streams;
+extern RingBuffer *streamBuffers;
+extern MP3DecoderHelix **mp3Decoders;
+extern bool *mp3DecoderInUse;
+extern AACDecoderHelix **aacDecoders;
+extern bool *aacDecoderInUse;
 
 // ===================================
 // Function Prototypes
 // ===================================
 
 // from serial_commands.cpp
-void log_message(const String& msg);
+void log_message(const String &msg);
 void processSerialCommands(Stream &serial); // Dual-buffer fix
 
 // from file_management.cpp
@@ -372,28 +386,27 @@ void writeIniFile();
 bool checkFirmwareVersionLittleFS();
 void scanValidBank1Pages();
 void scanBank1();
-bool syncBank1ToFlash();
 void playFirmwareUpdateFeedback(bool fwUpdated);
 
 void scanSDBanks();
 void scanRootTracks();
-SDBank* findSDBank(uint8_t bank, char page);
-const char* getSDFile(uint8_t bank, char page, int index);
-void playVoiceFeedback(const char* filename); // Exposed for other files
-void playVoiceNumber(int number); // Exposed for other files
-void playBaudFeedback(long rate); // Helper for baud rate feedback
-void playPageFeedback(char page); // Helper for page feedback
-void playUSBFeedback(bool enabled); // Helper for USB mode
-void playCCRCFeedback(); // Helper for CCRC reset
-void playBankNameFeedback(char page); // Helper for Bank Name feedback
-AudioFormat getAudioFormat(const char* filename); // Helper to get format from extension
-bool isAudioFile(const char* filename); // Helper to check if file is supported
+SDBank *findSDBank(uint8_t bank, char page);
+const char *getSDFile(uint8_t bank, char page, int index);
+void playVoiceFeedback(const char *filename);     // Exposed for other files
+void playVoiceNumber(int number);                 // Exposed for other files
+void playBaudFeedback(long rate);                 // Helper for baud rate feedback
+void playPageFeedback(char page);                 // Helper for page feedback
+void playUSBFeedback(bool enabled);               // Helper for USB mode
+void playCCRCFeedback();                          // Helper for CCRC reset
+void playBankNameFeedback(char page);             // Helper for Bank Name feedback
+AudioFormat getAudioFormat(const char *filename); // Helper to get format from extension
+bool isAudioFile(const char *filename);           // Helper to check if file is supported
 
 // from audio_playback.cpp
-void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref);
-void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void* ref);
-bool startStream(int streamIdx, const char* filename);
-bool startProgmemStream(int streamIdx, const uint8_t* data, size_t size);
+void mp3DataCallback(MP3FrameInfo &info, int16_t *pcm_buffer, size_t len, void *ref);
+void aacDataCallback(AACFrameInfo &info, int16_t *pcm_buffer, size_t len, void *ref);
+bool startStream(int streamIdx, const char *filename);
+bool startProgmemStream(int streamIdx, const uint8_t *data, size_t size);
 void stopStream(int streamIdx);
 void fillStreamBuffers(); // Main loop task
 void initAudioSystem();
@@ -406,11 +419,11 @@ void action_playPrev();
 void action_playTrackById(int trackNum);
 void action_playTrackByIndex(int trackIndex);
 void action_setSparkfunVolume(uint8_t sfVol);
-bool checkAndHandleMp3Command(Stream &s, uint8_t firstByte);
+bool checkAndHandleMp3Command(Stream &s, uint8_t firstByte, int cmdPos = 0);
 
 // from serial_queue.cpp
 void initSerial2Queue();
-bool queueSerial2Message(const char* msg);
+bool queueSerial2Message(const char *msg);
 void trySendQueuedMessages(int maxMessages);
 bool isCpuBusy();
 int getQueuedMessageCount();

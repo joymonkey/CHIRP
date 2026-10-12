@@ -86,10 +86,9 @@
  *   Selects the active sub-bank (page) for Bank 1 (Flash Bank).
  * #BAUD_RATE [2400, 9600, 19200, 38400, 57600 or 115200, Default: 115200]
  *   Sets the baud rate for the serial control interface.
- * #USE_FLASH_BANK1 [0 or 1, Default: 1]
- *   Enables/disables use of onboard flash memory for Bank 1 sounds. Setting to 0 may save startup time if not needed.
- * #LEGACY_MONOPHONIC [0 or 1, Default: 1]
- *   Controls behavior of the legacy T command. 0 = Polyphonic (sounds mix). 1 = Monophonic (stop & play).
+ * #LEGACY_MONOPHONIC [0 or 1, Default: 0]
+ *   Controls behavior of legacy MP3 Trigger commands. 0 = Polyphonic (sounds mix). 1 = Monophonic (stop & play).
+ * (Note: #USE_FLASH_BANK1 is deprecated; all Bank 1 audio streams directly from SD card)
  * #MAX_STREAMS [1-10, Default: 3]
  *   Maximum number of simultaneous audio streams. Increasing this uses more RAM/CPU.
  * #STREAM_BUFFER_SIZE [SMALL, MEDIUM, LARGE or custom number. Default: LARGE (512KB)]
@@ -101,8 +100,7 @@
 #include <CRC32.h> // For checksum
 //#include <Adafruit_NeoPixel.h>
 
-volatile bool g_allowAudio = false; // Start muted (for startup sync)
-bool useFlashForBank1 = false; // Default to SD unless enabled in INI
+volatile bool g_allowAudio = false; // Start muted
 
 
 void calculateGlobalChecksum() {
@@ -239,19 +237,19 @@ extern volatile uint32_t bufferUnderrunCount;
     
     // Initialize Flash (LittleFS)
     Serial.print("Initializing Flash... ");
-    if (FORMAT_FLASH) {
-        Serial.println("\n  FORMATTING FLASH (this will take a minute)...");
-        if (!LittleFS.format()) {
-            Serial.println("  Format FAILED!");
-            while (1) { delay(1000); }
-        }
-        Serial.println("  Format complete");
+    #ifdef FORMAT_FLASH
+    Serial.println("\n  FORMATTING FLASH (this will take a minute)...");
+    if (!LittleFS.format()) {
+        Serial.println("  Format FAILED!");
+        while (1) { delay(1000); }
     }
+    Serial.println("  Format complete");
+    #endif
     
     if (!LittleFS.begin()) {
         Serial.println("FAILED!");
         Serial.println("ERROR: Check Arduino IDE setting: '2MB Sketch, 14MB FS'");
-        Serial.println("Or try setting FORMAT_FLASH to true and re-upload");
+        Serial.println("Or try defining FORMAT_FLASH in config.h and re-upload");
         while (1) { delay(1000); }
     }
     Serial.println("OK");
@@ -267,6 +265,9 @@ extern volatile uint32_t bufferUnderrunCount;
     Serial.println("\n=== Reading CHIRP.INI ===");
     if (sdInitialized) {
         parseIniFile();
+        // Apply configured baud rate from CHIRP.INI to Serial2
+        Serial2.end();
+        Serial2.begin(baudRate);
     }
     
     // Check firmware version via LittleFS
@@ -277,8 +278,8 @@ extern volatile uint32_t bufferUnderrunCount;
         writeIniFile();
     }
     
-    Serial.printf("INI Parse Result: fwUpdated=%s, activePage=%c, useFlash=%d\n", 
-                  fwUpdated ? "TRUE" : "FALSE", activeBank1Page, useFlashForBank1);
+    Serial.printf("INI Parse Result: fwUpdated=%s, activePage=%c\n", 
+                  fwUpdated ? "TRUE" : "FALSE", activeBank1Page);
     Serial.printf("Active Bank 1 Page set to: %c\n", activeBank1Page);
 
     // Initialize Audio System
@@ -332,29 +333,6 @@ extern volatile uint32_t bufferUnderrunCount;
     playFirmwareUpdateFeedback(fwUpdated);
 
     if (sdInitialized) {
-        // Sync Bank 1 to Flash
-        Serial.println("\n=== Syncing Bank 1 to Flash ===");
-
-        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
-           // Rev.B: Keep I2S clocks active so XSMT pin can mute gracefully without pops
-           g_allowAudio = true; 
-        #elif !defined(MUTE_DURING_SYNC)
-           // Debug: Keep I2S clocks active to monitor noise floor
-           g_allowAudio = true;
-        #endif
-        
-        delay(10);
-        if (!syncBank1ToFlash()) {
-            Serial.println("WARNING: Bank 1 sync incomplete");
-        }
-        
-        // Re-check flash usage
-        LittleFS.info(fsInfo);
-        Serial.printf("  Flash Used: %d KB / %d KB (%.1f%%)\n",
-                      fsInfo.usedBytes / 1024,
-                      fsInfo.totalBytes / 1024,
-                      (fsInfo.usedBytes * 100.0) / fsInfo.totalBytes);
-
         // Scan SD banks (2-6)
         Serial.println("\n=== Scanning Banks 2-6 (SD Card) ===");
         scanSDBanks();

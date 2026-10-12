@@ -27,7 +27,7 @@ SDBank sdBanks[MAX_SD_BANKS];
 int sdBankCount = 0;
 
 // Root Tracks (Legacy Compatibility)
-char rootTracks[MAX_ROOT_TRACKS][16];
+char rootTracks[MAX_ROOT_TRACKS][MAX_ROOT_TRACK_NAME_LEN];
 int rootTrackCount = 0;
 
 // Test Tone State

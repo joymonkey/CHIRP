@@ -138,13 +138,8 @@ void handlePlay(Stream &serial, char* args) {
             sound.lastVariantPlayed = variantIdx;
             const char* filename = sound.variants[variantIdx];
             
-            // Dynamic path (Flash or SD)
             char fullPath[80];
-            if (useFlashForBank1) {
-                snprintf(fullPath, sizeof(fullPath), "/flash/%s", filename);
-            } else {
-                snprintf(fullPath, sizeof(fullPath), "/%s/%s", bank1DirName, filename);
-            }
+            snprintf(fullPath, sizeof(fullPath), "/%s/%s", bank1DirName, filename);
             
             // Common Playback Execution
             sendSerialResponse(serial, "PACK:PLAY");
@@ -335,27 +330,11 @@ void handleGnme(Stream &serial, char* args) {
 }
 
 void handleCcrc(Stream &serial) {
-    serial.println("CMD: CCRC - Clearing Flash...");
-    
+    serial.println("CMD: CCRC - Flash sync retired (audio streams directly from SD card).");
     for (int i = 0; i < maxStreams; i++) {
         stopStream(i);
     }
-    
-    int count = 0;
-    Dir dir = LittleFS.openDir("/flash");
-    while (dir.next()) {
-        if (!dir.isDirectory()) {
-            String fullPath = "/flash/" + dir.fileName();
-            if (LittleFS.remove(fullPath)) {
-                count++;
-            }
-        }
-    }
-    
-    serial.printf("Deleted %d files from /flash.\n", count);
-    serial.println("Please REBOOT the board to re-sync files.");
     sendSerialResponse(serial, "PACK:CCRC");
-    
     playCCRCFeedback();
 }
 
@@ -472,13 +451,24 @@ void processSerialCommands(Stream &serial) {
         return; 
     }
     
+    static unsigned long lastSerial2RxTime = 0;
+    if (&serial == &Serial2) {
+        if (uartCmdPos > 0 && (millis() - lastSerial2RxTime > 150)) {
+            // Discard incomplete line / line noise on UART
+            uartCmdPos = 0;
+        }
+    }
+
     int& cmdPos = *cmdPosPtr; 
     
-    while (serial.available()) {                
+    while (serial.available()) {
+        if (&serial == &Serial2) {
+            lastSerial2RxTime = millis();
+        }
         char c = serial.read();
         
-        // Try compat layer first (ONLY if we are not already building a command)
-        if (cmdPos == 0 && checkAndHandleMp3Command(serial, (uint8_t)c)) {
+        // Try compat layer (state machine for 1-byte and 2-byte legacy commands)
+        if (checkAndHandleMp3Command(serial, (uint8_t)c, cmdPos)) {
             continue;
         }
 
@@ -496,11 +486,14 @@ void processSerialCommands(Stream &serial) {
                 if (strncmp(cmdBuffer, "PLAY:", 5) == 0) {
                     handlePlay(serial, cmdBuffer + 5);
                 }
-                else if (strncmp(cmdBuffer, "STOP", 4) == 0) {
-                    // STOP or STOP: param
-                    char* args = cmdBuffer + 4;
-                    if (*args == ':') args++;
-                    handleStop(serial, args);
+                else if (strcmp(cmdBuffer, "STOP") == 0 || strcmp(cmdBuffer, "S") == 0) {
+                    handleStop(serial, (char*)"");
+                }
+                else if (strncmp(cmdBuffer, "STOP:", 5) == 0) {
+                    handleStop(serial, cmdBuffer + 5);
+                }
+                else if (strcmp(cmdBuffer, "P") == 0) {
+                    action_togglePlayPause();
                 }
                 else if (strncmp(cmdBuffer, "CHRP:", 5) == 0) {
                     handleChirp(serial, cmdBuffer + 5);

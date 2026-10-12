@@ -70,15 +70,6 @@ bool parseIniFile() {
                         }
                     }
                 }
-                // Check USE_FLASH_BANK1
-                else if (strncasecmp(command, "USE_FLASH_BANK1", 15) == 0) {
-                    char* value = strchr(command, ' ');
-                    if (value) {
-                        while (*(++value) == ' '); // Find first char of value
-                        int val = atoi(value);
-                        useFlashForBank1 = (val == 1);
-                    }
-                }
                 // Check MAX_STREAMS
                 else if (strncasecmp(command, "MAX_STREAMS", 11) == 0) {
                     char* value = strchr(command, ' ');
@@ -193,7 +184,6 @@ void writeIniFile() {
         iniFile.println("# CHIRP Configuration File");
         iniFile.println("# Settings:");
         iniFile.printf("#BANK1_PAGE %c\n", activeBank1Page); 
-        iniFile.printf("#USE_FLASH_BANK1 %d\n", useFlashForBank1 ? 1 : 0);
         iniFile.printf("#BAUD_RATE %ld\n", baudRate);
         iniFile.printf("#MAX_STREAMS %d\n", maxStreams);
         int bufKB = (streamBufferSize * 2) / 1024;
@@ -474,8 +464,8 @@ void playVoiceFeedback(const char* filename) {
     
     // Mute again (Restore "Silence" state between files)
     
-    // Rev.A (Software Mute): Stop clocks to silence
-    #if defined(MUTE_DURING_SYNC) && !defined(I2S_MUTE_PIN)
+    // Rev.A (Software Mute): Stop clocks to silence (no dedicated mute pin on Rev.A)
+    #if !defined(I2S_MUTE_PIN)
     g_allowAudio = false;
     #endif
     
@@ -659,314 +649,6 @@ void playFirmwareUpdateFeedback(bool fwUpdated) {
 }
 
 // ===================================
-// Sync Bank 1 to Flash
-// ===================================
-bool syncBank1ToFlash() {
-    if (!useFlashForBank1) {
-        Serial.println("  Skipping sync: Flash memory usage disabled in CHIRP.INI.");
-        return false;
-    }
-
-    if (bank1DirName[0] == '\0') {
-        Serial.println("  Skipping sync: No active Bank 1 directory found.");
-        return false;
-    }
-    
-    // Check for Voice Feedback Directory
-    bool hasVoiceFeedback = false;
-    mutex_enter_blocking(&sd_mutex);
-    if (sd.exists("/0_System")) {
-        hasVoiceFeedback = true;
-    }
-    mutex_exit(&sd_mutex);
-
-    if (hasVoiceFeedback) {
-        Serial.println("  Voice Feedback: Enabled");
-    }
-    
-    if (!LittleFS.exists("/flash")) {
-        LittleFS.mkdir("/flash");
-    }
-
-    // --- Pruning stale files from flash ---
-    Serial.println("  Pruning stale files from flash...");
-    int filesDeleted = 0;
-    Dir dir = LittleFS.openDir("/flash");
-    while (dir.next()) {
-        if (!dir.isDirectory()) {
-            char flashFilename[64];
-            strncpy(flashFilename, dir.fileName().c_str(), sizeof(flashFilename) - 1);
-            
-            bool foundInMasterList = false;
-            // Check if this file exists in the new SD bank (master list)
-            for (int i = 0; i < bank1SoundCount; i++) {
-                for (int v = 0; v < bank1Sounds[i].variantCount; v++) {
-                    if (strcmp(flashFilename, bank1Sounds[i].variants[v]) == 0) {
-                        foundInMasterList = true;
-                        break;
-                    }
-                }
-                if (foundInMasterList) break;
-            }
-            
-            // If the file was NOT found in the master list, delete it.
-            if (!foundInMasterList) {
-                char fullFlashPath[80];
-                snprintf(fullFlashPath, sizeof(fullFlashPath), "/flash/%s", flashFilename);
-                if (LittleFS.remove(fullFlashPath)) {
-                    Serial.printf("    - Deleted stale file: %s\n", flashFilename);
-                    filesDeleted++;
-                } else {
-                    Serial.printf("    - ERROR deleting: %s\n", flashFilename);
-                }
-            }
-        }
-    }
-    if (filesDeleted == 0) {
-        Serial.println("    - No stale files found.");
-    }
-    // --- End of Pruning Feature ---
-
-    
-    int totalFiles = 0;
-    for (int i = 0; i < bank1SoundCount; i++) {
-        totalFiles += bank1Sounds[i].variantCount;
-    }
-    
-    int syncLimit = DEV_MODE ? min(totalFiles, DEV_SYNC_LIMIT) : totalFiles;
-    Serial.printf("  Syncing %d files from %s", syncLimit, bank1DirName);
-    if (DEV_MODE && totalFiles > syncLimit) {
-        Serial.printf(" (DEV MODE: limited to first %d)", DEV_SYNC_LIMIT);
-    }
-    Serial.println();
-    
-    // --- Voice Feedback: Start ---
-
-
-    // --- Count Actual Files to Sync ---
-    int filesToSync = 0;
-    int preCheckProcessed = 0;
-    
-    // We pre-calculate to provide accurate "Syncing X files" voice prompt.
-    // This allows us to say "Syncing 5 files" when 95 are already synced.
-    
-    for (int i = 0; i < bank1SoundCount; i++) {
-        for (int v = 0; v < bank1Sounds[i].variantCount; v++) {
-            preCheckProcessed++;
-            if (DEV_MODE && preCheckProcessed > DEV_SYNC_LIMIT) break;
-
-            const char* filename = bank1Sounds[i].variants[v];
-            char sdPath[64];
-            char flashPath[64];
-            snprintf(sdPath, sizeof(sdPath), "/%s/%s", bank1DirName, filename);
-            snprintf(flashPath, sizeof(flashPath), "/flash/%s", filename);
-
-            bool needsCopy = true;
-            mutex_enter_blocking(&sd_mutex);
-            FsFile sdFile = sd.open(sdPath, FILE_READ);
-            if (sdFile) {
-                size_t sdSize = sdFile.size();
-                if (LittleFS.exists(flashPath)) {
-                    File flashFile = LittleFS.open(flashPath, "r");
-                    if (flashFile) {
-                        size_t flashSize = flashFile.size();
-                        if (flashSize == sdSize) {
-                            needsCopy = false; 
-                        }
-                        flashFile.close();
-                    }
-                }
-                sdFile.close();
-            }
-            mutex_exit(&sd_mutex);
-
-            if (needsCopy) filesToSync++;
-        }
-        if (DEV_MODE && preCheckProcessed > DEV_SYNC_LIMIT) break;
-    }
-    
-    // --- Voice Feedback: Start ---
-    if (hasVoiceFeedback && filesToSync > 0) {
-        // "Syncing"
-        playVoiceFeedback("syncing.wav");
-        delay(100);
-        
-        // "X"
-        playVoiceNumber(filesToSync);
-        delay(100);
-        
-        // "Files"
-        playVoiceFeedback("files.wav");
-        delay(100);
-
-        // "Of"
-        playVoiceFeedback("of.wav");
-        delay(100);
-
-        // "Y"
-        playVoiceNumber(syncLimit);
-        delay(100);
-
-        // "Total"
-        playVoiceFeedback("total.wav");
-        delay(100);
-
-        // "Files"
-        playVoiceFeedback("files.wav");
-        delay(200);
-    } else if (hasVoiceFeedback) {
-        Serial.println("  System in sync. Silent startup.");
-    }
-    
-    int filesCopied = 0;
-    int filesSkipped = 0;
-    int filesProcessed = 0;
-    int filesSyncedSoFar = 0;
-
-    for (int i = 0; i < bank1SoundCount; i++) {
-        for (int v = 0; v < bank1Sounds[i].variantCount; v++) {
-            filesProcessed++;
-            if (DEV_MODE && filesProcessed > DEV_SYNC_LIMIT) {
-                goto sync_complete;
-            }
-            
-            const char* filename = bank1Sounds[i].variants[v];
-            Serial.printf("  [%d/%d] ", filesProcessed, syncLimit);
-            
-            char sdPath[64];
-            char flashPath[64];
-            snprintf(sdPath, sizeof(sdPath), "/%s/%s", bank1DirName, filename);
-            snprintf(flashPath, sizeof(flashPath), "/flash/%s", filename);
-            
-            // Heartbeat for scanning
-            updateSyncLEDs(false);
-
-            bool needsCopy = true;
-            bool justCopied = false;
-            mutex_enter_blocking(&sd_mutex);
-            FsFile sdFile = sd.open(sdPath, FILE_READ);
-            if (sdFile) {
-                size_t sdSize = sdFile.size();
-                if (LittleFS.exists(flashPath)) {
-                    File flashFile = LittleFS.open(flashPath, "r");
-                    if (flashFile) {
-                        size_t flashSize = flashFile.size();
-                        if (flashSize == sdSize) {
-                            needsCopy = false;
-                            filesSkipped++;
-                            Serial.printf("Skipped: %s\n", filename);
-                        }
-                        
-                        flashFile.close();
-                    }
-                }
-                
-                if (needsCopy) {
-                    // Sync File Transition Feedback
-                    updateSyncLEDs(true);
-                    
-                    sdFile.rewind();
-                    File flashFile = LittleFS.open(flashPath, "w");
-                    if (flashFile) {
-                        const uint16_t CHUNK_SIZE = 512;
-                        uint8_t buffer[CHUNK_SIZE];
-                        uint32_t remaining = sdSize;
-                        bool copySuccess = true;
-                        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
-                        digitalWrite(I2S_MUTE_PIN, LOW); // Mute (Low = Soft Mute)
-                        #endif
-                        Serial.printf("Copying: %s (%lu KB)... ", 
-                                     filename, sdSize / 1024);
-                        while (remaining > 0 && copySuccess) {
-                            uint16_t toRead = (remaining > CHUNK_SIZE) ?
-                                              CHUNK_SIZE : remaining;
-                            
-                            int bytesRead = sdFile.read(buffer, toRead);
-                            
-                            // Heartbeat during copy
-                            updateSyncLEDs(false);
-
-                            if (bytesRead <= 0) {
-                                Serial.println(" READ ERROR!");
-                                copySuccess = false;
-                                break;
-                            }
-                            
-                            int bytesWritten = flashFile.write(buffer, bytesRead);
-                            if (bytesWritten != bytesRead) {
-                                Serial.println(" WRITE ERROR!");
-                                copySuccess = false;
-                                break;
-                            }
-                            
-                            remaining -= bytesRead;
-                        }
-                        
-                        flashFile.close();
-
-                        #if defined(MUTE_DURING_SYNC) && defined(I2S_MUTE_PIN)
-                        digitalWrite(I2S_MUTE_PIN, HIGH); // Unmute
-                        #endif
-                        if (copySuccess) {
-                            Serial.println("OK");
-                            filesCopied++;
-                            filesSyncedSoFar++;
-                            justCopied = true;
-                            
-                            // Success Feedback is outside mutex to avoid deadlock
-                        }
-                    } else {
-                        Serial.println(" FAILED to create flash file!");
-                    }
-                }
-                
-                sdFile.close();
-            } else {
-                Serial.printf("ERROR: Could not open %s\n", sdPath);
-            }
-            
-            mutex_exit(&sd_mutex);
-
-            if (justCopied) {
-                if (hasVoiceFeedback) {
-                    playVoiceNumber(filesSyncedSoFar);
-                } else {
-                    // Original Beeper Feedback
-                    g_allowAudio = true; 
-                    delay(5); // Wait for I2S to start
-                    playChirp(2000, 500, 60, 50); // fast chirp
-                    delay(60);
-                    playChirp(2000, 4000, 50, 50); // fast chirp
-                    delay(60); // Wait for chirp (blocking Core 0 is fine here)
-                    g_allowAudio = false; // Mute again
-                    delay(5);
-                }
-            }
-        }
-    }
-    
-sync_complete:
-    
-    if (hasVoiceFeedback && filesToSync > 0) {
-        delay(200);
-        // "Transfer"
-        playVoiceFeedback("transfer.wav");
-        delay(10);
-        // "Completed" (or "Complete", checking list: complete.wav, completed.wav both exist)
-        // User asked for "file transfer completed", using "completed.wav"
-        playVoiceFeedback("completed.wav"); 
-        delay(100);
-        // "Ready"
-        playVoiceFeedback("ready.wav");
-    }
-
-    Serial.printf("\n  Summary: %d copied, %d skipped, %d pruned\n", 
-                  filesCopied, filesSkipped, filesDeleted);
-    return true;
-}
-
-
-// ===================================
 // Scan SD Banks (2-6 with optional pages)
 // ===================================
 void scanSDBanks() {
@@ -1099,6 +781,7 @@ void scanRootTracks() {
                 
                 if (rootTrackCount < MAX_ROOT_TRACKS) {
                     strncpy(rootTracks[rootTrackCount], filename, sizeof(rootTracks[0]) - 1);
+                    rootTracks[rootTrackCount][sizeof(rootTracks[0]) - 1] = '\0';
                     rootTrackCount++;
                 }
             }
@@ -1113,10 +796,13 @@ void scanRootTracks() {
     for (int i = 0; i < rootTrackCount - 1; i++) {
         for (int j = 0; j < rootTrackCount - i - 1; j++) {
             if (strcasecmp(rootTracks[j], rootTracks[j+1]) > 0) {
-                char temp[16];
-                strncpy(temp, rootTracks[j], sizeof(temp));
-                strncpy(rootTracks[j], rootTracks[j+1], sizeof(rootTracks[j]));
-                strncpy(rootTracks[j+1], temp, sizeof(temp));
+                char temp[MAX_ROOT_TRACK_NAME_LEN];
+                strncpy(temp, rootTracks[j], sizeof(temp) - 1);
+                temp[sizeof(temp) - 1] = '\0';
+                strncpy(rootTracks[j], rootTracks[j+1], sizeof(rootTracks[j]) - 1);
+                rootTracks[j][sizeof(rootTracks[j]) - 1] = '\0';
+                strncpy(rootTracks[j+1], temp, sizeof(rootTracks[j+1]) - 1);
+                rootTracks[j+1][sizeof(rootTracks[j+1]) - 1] = '\0';
             }
         }
     }
