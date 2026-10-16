@@ -55,6 +55,20 @@ void startMSC() {
     usb_msc->setReadWriteCallback(msc_read_cb, msc_write_cb, msc_flush_cb);
     usb_msc->setCapacity(block_count, 512);
     usb_msc->setUnitReady(true);
+
+    // Add the MSC interface once, and before re-enumerating. Every begin() appends another
+    // interface to the USB configuration descriptor (Adafruit_USBD_Device::addInterface), so
+    // calling it on each MUSB:1 left the host with stale MSC interfaces nothing services; the
+    // host then kept resetting the device, which eventually hung the firmware.
+    static bool mscInterfaceAdded = false;
+    if (!mscInterfaceAdded) {
+      if (!usb_msc->begin()) {  // Note: ->begin() not .begin()
+        Serial.println("[!!!] MSC Setup Failed!");
+        g_mscActive = false;
+        return;
+      }
+      mscInterfaceAdded = true;
+    }
     
     // Force re-enumeration
     if (TinyUSBDevice.mounted()) {
@@ -62,13 +76,7 @@ void startMSC() {
       delay(1000); // Matched to Test Sketch
       TinyUSBDevice.attach();
     }
-
-    if (usb_msc->begin()) {  // Note: ->begin() not .begin()
-      Serial.println("[+++] MSC Interface ACTIVE.");
-    } else {
-      Serial.println("[!!!] MSC Setup Failed!");
-      g_mscActive = false;
-    }
+    Serial.println("[+++] MSC Interface ACTIVE.");
 }
 
 // ===================================
