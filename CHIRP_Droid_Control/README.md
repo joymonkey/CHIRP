@@ -1,8 +1,11 @@
 # CHIRP Droid Control — System Overview
 
-This is control firmware for an R2-D2 style mobile robot. It runs on a **Raspberry Pi Pico 2 W** (RP2350) and is operated remotely via a **Radiomaster Zorro** EdgeTX transmitter (additional transmitter support expected in future) over **ExpressLRS** or **Crossfire** RC radio link. A companion **Lua telemetry script** on the transmitter provides a live sound dashboard and diagnostics display.
+This is control firmware for an R2-D2 style mobile robot. It runs on an **Espressif ESP32-S3** (Waveshare ESP32-S3 Zero and ESP32-S3 DevKit) and is operated remotely via an EdgeTX transmitter over an **ExpressLRS** or **Crossfire** RC radio link (initially optimized for the **Radiomaster Zorro**, with future support for additional EdgeTX form factors like the TX16S, Boxer, and Pocket). A companion **Lua telemetry script** on the transmitter provides a live sound dashboard, settings editor, and diagnostics display.
 
-This document describes the complete system architecture, data flows, and design rationale as implemented in the firmware.
+> [!NOTE]
+> **Active Architecture Notice**: The active firmware targets the **ESP32-S3**. See [DEVELOPMENT_PLAN.md](file:///c:/Users/Paul/Documents/GitHub/CHIRP/CHIRP_Droid_Control/DEVELOPMENT_PLAN.md) for the phased roadmap, pinouts, and architecture. The prior Raspberry Pi Pico 2 W prototype is archived in `firmware-pico2/`.
+
+This document describes the system architecture, data flows, and design rationale as implemented in the firmware.
 
 ---
 
@@ -10,12 +13,19 @@ This document describes the complete system architecture, data flows, and design
 
 - [System Architecture](#system-architecture)
 - [Hardware & Pin Assignments](#hardware--pin-assignments)
-- [RC Channel Map](#rc-channel-map-radiomaster-zorro-profile)
+- [Operator Setup Guide: Transmitter & Receiver Configuration](#operator-setup-guide-transmitter--receiver-configuration)
+  - [1. Receiver Wiring & Link Verification](#1-receiver-wiring--link-verification)
+  - [2. EdgeTX Telemetry Discovery ("Discover New")](#2-edgetx-telemetry-discovery-discover-new)
+  - [3. ExpressLRS & CRSF Failsafe Architecture](#3-expresslrs--crsf-failsafe-architecture)
+  - [4. Multi-Layer Safety Architecture](#4-multi-layer-safety-architecture)
+  - [5. Operator Bench Verification Checklist](#5-operator-bench-verification-checklist)
+- [RC Channel Map (Radiomaster Zorro Profile)](#rc-channel-map-radiomaster-zorro-profile)
 - [Sound Playback System](#sound-playback-system)
 - [Audio Manifest Sync](#audio-manifest-sync)
 - [Telemetry System](#telemetry-system)
 - [Lua Telemetry Script](#lua-telemetry-script-chirplua)
 - [Dome Control](#dome-control)
+  - [SyRen 10 Driver Configuration & Failsafe DIP Switches](#syren-10-driver-configuration--failsafe-dip-switches)
 - [Foot Drive](#foot-drive)
 - [Autodome & Autochirp](#autodome--autochirp)
 - [Debug Systems](#debug-systems)
@@ -32,122 +42,191 @@ graph LR
         LUA["CHIRP.lua<br/>Telemetry Dashboard"]
     end
     subgraph Robot
-        ELRS["ELRS Receiver"]
-        PICO["Raspberry Pi<br/>Pico 2 W"]
+        ELRS["ELRS / CRSF<br/>Receiver"]
+        ESP["ESP32-S3<br/>Controller"]
         RAD["Roam-A-Dome<br/>Controller"]
         AUDIO["CHIRP_Audio<br/>Trigger"]
+        LIGHT["RSeries Dome<br/>Lighting Engine"]
         FL["Left Foot<br/>Motor Driver"]
         FR["Right Foot<br/>Motor Driver"]
         SYR["SyRen10<br/>Dome Motor"]
         SPK["Speaker"]
     end
     TX -- "ELRS RF Link" --> ELRS
-    ELRS -- "CRSF UART (420kbaud)" --> PICO
-    PICO -- "CRSF Telemetry" --> ELRS
+    ELRS -- "CRSF UART (420kbaud)" --> ESP
+    ESP -- "CRSF Telemetry" --> ELRS
     ELRS -- "Telemetry Uplink" --> TX
     TX --> LUA
-    PICO -- "UART (115200)" --> AUDIO
-    AUDIO -- "UART (115200)" --> PICO
+    ESP -- "UART2 (115200)" --> AUDIO
+    AUDIO -- "UART2 (115200)" --> ESP
     AUDIO --> SPK
-    PICO -- "PWM (velocity)" --> RAD
-    PICO -- "PIO UART (9600)" --> RAD
-    RAD -- "PIO UART (position)" --> PICO
+    ESP -- "PWM (velocity)" --> RAD
+    ESP -- "UART0 (9600)" --> RAD
+    RAD -- "UART0 (position)" --> ESP
     RAD -- "Serial Passthrough" --> SYR
-    PICO -- "PWM" --> FL
-    PICO -- "PWM" --> FR
+    ESP -- "SoftSerial (9600)" --> LIGHT
+    ESP -- "PWM (LEDC Ch0)" --> FL
+    ESP -- "PWM (LEDC Ch1)" --> FR
 ```
 
 ### Data Flow Summary
 
 | Path | Purpose | Protocol |
 |------|---------|----------|
-| Transmitter → ELRS → Pico | RC channel values (sticks, switches, knobs) | CRSF @ 420000 baud |
-| Pico → ELRS → Transmitter | Telemetry (battery, sound names, diagnostics) | CRSF telemetry frames |
-| Pico → CHIRP_Audio | Play/stop commands, manifest requests, voice debug | Serial @ 115200 baud |
-| CHIRP_Audio → Pico | Manifest data, sound names, command ACKs | Serial @ 115200 baud |
-| Pico → Roam-A-Dome | Dome velocity (PWM) + serial commands | PWM + PIO UART @ 9600 |
-| Roam-A-Dome → Pico | Dome position reports | PIO UART @ 9600 |
-| Pico → USB | Debug serial output | USB CDC @ 115200 baud |
+| Transmitter → ELRS → ESP32-S3 | RC channel values (sticks, switches, knobs) + CRSF `0x32` Commands | CRSF @ 420000 baud |
+| ESP32-S3 → ELRS → Transmitter | Telemetry (battery, sound counts, diagnostics, sound names) | CRSF telemetry frames |
+| ESP32-S3 → CHIRP_Audio | Play/stop commands, manifest requests, voice debug | Serial @ 115200 baud (UART2) |
+| CHIRP_Audio → ESP32-S3 | Manifest data, sound names, command ACKs | Serial @ 115200 baud (UART2) |
+| ESP32-S3 → Roam-A-Dome | Dome velocity (PWM) + serial commands | PWM + Hardware UART0 @ 9600 |
+| Roam-A-Dome → ESP32-S3 | Dome position reports | Hardware UART0 @ 9600 |
+| ESP32-S3 → Dome Lighting | Marcduino / RSeries script animation triggers | SoftSerial @ 9600 baud |
+| ESP32-S3 → USB | Debug serial output & live logs | Native USB CDC @ 115200 baud |
 
 ---
 
 ## Hardware & Pin Assignments
 
-### UART Allocation
+The ESP32-S3 architecture utilizes non-strapping GPIOs on the Waveshare ESP32-S3 Zero and ESP32-S3 DevKitC-1 N16R8.
 
-The RP2350 has 2 hardware UARTs plus programmable PIO state machines that can emulate additional UARTs. CHIRP uses 4 total serial interfaces without any SoftwareSerial hacks.
+### Peripheral & UART Allocation
 
-| UART | Peripheral | Baud Rate | TX Pin | RX Pin | Type |
-|------|-----------|-----------|--------|--------|------|
-| Serial (USB) | Debug output | 115200 | — | — | USB CDC |
-| Serial1 (HW UART0) | CRSF / ELRS RX | 420000 | GP0 | GP1 | Hardware |
-| Serial2 (HW UART1) | CHIRP_Audio | 115200 | GP4 | GP5 | Hardware |
-| SerialPIO (PIO0) | Roam-A-Dome | 9600 | GP8 | GP9 | PIO UART |
-| *(Future)* SerialPIO (PIO1) | Marcduino | 9600 | GP16 | GP17 | PIO UART |
+| Interface | Peripheral | Baud Rate | TX Pin | RX Pin | Notes |
+|-----------|------------|-----------|--------|--------|-------|
+| Native USB | Debug Logs & CLI | 115200 | — | — | Native USB CDC (`ARDUINO_USB_CDC_ON_BOOT=1`) |
+| Serial1 (HW UART1) | CRSF / ELRS Link | 420000 | GP4 | GP5 | Connect GP4 → RX on Receiver, GP5 → TX on Receiver |
+| Serial2 (HW UART2) | CHIRP_Audio Trigger | 115200 | GP1 | GP2 | Bidirectional sound commands & manifest sync |
+| Serial0 (HW UART0) | Roam-A-Dome (RAD) | 9600 | GP43 | GP44 | Dome velocity/autodome commands & position feedback |
+| SoftSerial | Dome Lighting Engine | 9600 | GP12 | GP13 | Marcduino RSeries logic display animation triggers |
 
-### Other Pins
+### PWM Outputs & Analog Sensing
 
-| Function | Pin | Type |
-|----------|-----|------|
-| Left Foot Motor PWM | GP10 | PWM Output |
-| Right Foot Motor PWM | GP11 | PWM Output |
-| Dome Motor PWM | GP12 | PWM Output (to Roam-A-Dome) |
-| Status LED | GP25 | Digital Output (onboard) |
-| Battery 1 Voltage | GP26 | ADC0 |
-| Battery 2 Voltage | GP27 | ADC1 |
-| Battery 3 Voltage | GP28 | ADC2 |
+| Function | Pin | Hardware Type | Configuration / Signal |
+|----------|-----|---------------|------------------------|
+| Left Foot Motor PWM | GP6 | LEDC Ch0 (50Hz) | 1000–2000 µs (1500 µs neutral, 25 µs deadband) |
+| Right Foot Motor PWM | GP7 | LEDC Ch1 (50Hz) | 1000–2000 µs (1500 µs neutral, 25 µs deadband) |
+| Dome Motor PWM | GP11 | LEDC Ch2 (50Hz) | 1000–2000 µs (1500 µs neutral, to Roam-A-Dome) |
+| Battery 1 Voltage | GP8 | ADC1_CH7 | Primary 12V/24V foot drive battery voltage |
+| Battery 2 Voltage | GP9 | ADC1_CH8 | Audio amplifier / sound system battery voltage |
+| Battery 3 Voltage | GP10 | ADC1_CH9 | Aux / dome subsystem battery voltage |
+| Status NeoPixel | GP21 / GP48 | WS2812B RGB | GP21 on S3-Zero, GP48 on DevKitC-1 N16R8 |
+| Spare / Aux Pin | GP3 | GPIO Output | Isolated strapping pin (output-only) |
+
+---
+
+## Operator Setup Guide: Transmitter & Receiver Configuration
+
+This section covers the initial setup of your EdgeTX transmitter (e.g. Radiomaster Zorro, TX16S, Boxer, Pocket) and ExpressLRS / Crossfire receiver. **Follow these steps before operating the droid.**
+
+### 1. Receiver Wiring & Link Verification
+
+- **Serial Connection to ESP32-S3**:
+  - Receiver TX → ESP32-S3 **GP5** (`PIN_CRSF_RX` / Hardware UART1)
+  - Receiver RX → ESP32-S3 **GP4** (`PIN_CRSF_TX` / Hardware UART1)
+  - Receiver VCC / GND → Regulated **5V** and Common Ground
+  - Operating baud rate: **420,000 baud** (CRSF standard)
+- Verify RF link: Solid LED on the receiver and link telemetry (`1RSS`/`RQly`) visible on the handset.
+
+### 2. EdgeTX Telemetry Discovery ("Discover New")
+
+When initially pairing the transmitter to the robot, you **must** discover telemetry sensors in EdgeTX so the radio registers their sensor IDs into the active model configuration.
+
+> [!IMPORTANT]
+> **Mandatory Setup Step**: EdgeTX will **not** pass telemetry data to Lua scripts (like `CHIRP.lua`) or telemetry display widgets until the sensors have been discovered. If you skip this step, battery voltages, current draw, volume, and sound names will not appear on your transmitter.
+
+**Step-by-step discovery procedure:**
+1. Power on the droid (both the ESP32-S3 and the receiver). Ensure the CHIRP firmware is running and actively transmitting CRSF telemetry uplink frames.
+2. Power on the EdgeTX transmitter and confirm the RF link is active.
+3. Long-press the **`MDL`** button to enter the **Model Menu**.
+4. Page over (using `PAGE >`) to the **Telemetry** page (typically Page 11 or 12 depending on EdgeTX version).
+5. Scroll down to the sensors list and select **"Discover New"** (or **"Discover new sensors"**).
+6. Verify that the following sensors appear and start updating live:
+   - `RxBt`: Multiplexed 3-battery voltage monitor (Primary Drive, Audio, Aux/Dome)
+   - `Curr`: Instantaneous drive and system current draw (Amperes)
+   - `Capa`: Repurposed for peak current draw since boot (Amperes)
+   - `GSpd`: Repurposed for master audio volume (0–99%)
+   - `Sats`: Packed system status (Drive Arm/Disarm, Speed Mode, Autodome, Autochirp)
+   - `Hdg`: Active page sound counts for Banks 1 & 2
+   - `Alt` (or `GAlt`): Active page sound counts for Banks 3 & 4
+   - `FM`: Streaming Flight Mode string carrying sound names, page names, and manifest data
+   - `1RSS`, `2RSS`, `RQly`, `TPWR`: ExpressLRS / Crossfire RF link health metrics
+7. Once all sensors are populated and values are actively streaming, select **"Stop Discover"**.
+
+> [!WARNING]
+> Always select **"Stop Discover"** once discovery is complete. Leaving discovery running increases CPU load on the transmitter and can create duplicate or ghost sensor IDs if nearby transmitters or RF sources are active.
+
+### 3. ExpressLRS & CRSF Failsafe Architecture
+
+In drone and robotics systems running ExpressLRS over a serial UART link (**CRSF protocol**), failsafe behavior operates fundamentally differently from legacy PWM/PPM systems:
+
+#### How CRSF Serial Failsafe Operates
+- **No Receiver-Side Channel Programming**: When using an ExpressLRS serial receiver wired to a flight controller or microcontroller, you do **not** configure channel fallback positions on the receiver or in the transmitter's "Custom Failsafe" menu. 
+- **Digital Link-Loss Signaling**: When an ExpressLRS receiver loses the RF link from the transmitter, it simply **stops transmitting valid CRSF packets** over the UART (or signals a link-down flag). The receiver does not synthesize fake or held channel pulses to the microcontroller.
+- **The ESP32-S3 Acts as the Flight Controller**: Because CRSF is a digital packet stream, the flight controller firmware running on the ESP32-S3 is completely in charge of detecting signal loss and executing the failsafe response:
+  - The `CrsfLink` engine in the ESP32-S3 monitors the interval since the last valid CRSF frame (`g_robotState.lastValidCrsfMs`).
+  - If no valid frames arrive within **250ms** (`RC_FAILSAFE_TIMEOUT_MS`), the ESP32-S3 immediately engages its failsafe sequence:
+    1. Sets `rcLinkUp = false`
+    2. Instantly disarms foot drive (`isArmed = false`)
+    3. Overrides foot drive PWM outputs (`GP6` and `GP7`) to exactly **1500 µs (neutral)**
+    4. Overrides dome motor PWM (`GP11`) to exactly **1500 µs (neutral)**
+    5. Locks speed mode back to `SLOW`
+    6. Triggers the voice prompt `"warning receiver disconnected"`
+
+#### Physical Power States & Motor Safety
+A key safety question in astromech droids is: **What happens to the motors if the ESP32-S3 is powered off, rebooting, or being flashed, while the receiver remains powered on the droid's 5V bus?**
+- **Direct Controller Isolation**: The foot motor drivers (e.g. Sabertooth, Roboteq) and dome driver (SyRen10 via Roam-A-Dome) are connected to the **ESP32-S3's PWM pins (`GP6`, `GP7`, `GP11`)**, not to the receiver.
+- **ESP32 Powered Off**: When the ESP32 is powered off or held in reset, its GPIO pins are in a high-impedance (unpowered) floating state. Because no 50Hz PWM pulse train is being generated, modern motor controllers enter their built-in **signal-loss shutdown mode** (neutral/freewheel or brake). The motors will not move. *(Note: For the dome motor, ensure the SyRen 10's **DIP Switch 6 is UP** for Timeout Failsafe and **DIP Switch 4 is UP** for standard R/C mode, otherwise it will continue driving or latch onto floating wire noise—see [SyRen 10 Driver Configuration](#syren-10-driver-configuration--failsafe-dip-switches)).*
+- **ESP32 Booting Up**: When the ESP32 boots, firmware initialization immediately configures the LEDC hardware PWM channels to output a solid **1500 µs neutral pulse**, with drive motors forced into the Disarmed state until an explicit, valid arming sequence is received.
+- *(Note on Standalone PWM Receivers)*: If you ever use an ExpressLRS receiver with native PWM servo pins directly connected to motors without a microcontroller, failsafe positions must be set in the ELRS WebUI or via the handset Lua script. However, in the CHIRP architecture, the ESP32-S3 acts as the intelligent flight controller and manages all PWM signals directly.
+
+### 4. Multi-Layer Safety Architecture
+
+CHIRP implements defense-in-depth across 4 integrated safety layers to guarantee that foot and dome movement remain centered and stopped:
+
+| Safety Layer | Trigger / Condition | System Response |
+| :--- | :--- | :--- |
+| **1. CRSF Digital Link Loss** | Transmitter turned off or RF signal lost | ELRS receiver ceases UART packet transmission; ESP32-S3 detects packet loss within 250ms. |
+| **2. ESP32 Zero-Latency Watchdog** | >250ms gap in valid CRSF packets | `CrsfLink` auto-disarms, forces foot & dome PWM outputs to `1500 µs` (neutral), and plays a voice warning. |
+| **3. Boot-Disarm Interlock** | System powers up with Arm Switch `SE` in the Armed position | Foot drive is locked out at neutral until the operator cycles switch `SE` back to Disarmed (`< 1200 µs`). |
+| **4. Slow-on-Arm Protection** | Initial arming of foot drive via switch `SE` | Speed mode is forced to SLOW (`30%`) regardless of switch `SB` position until `SB` is physically moved. |
+
+### 5. Operator Bench Verification Checklist
+
+Always perform these safety verification tests on a test stand before driving:
+- [ ] **Test 1 — Transmitter Off Failsafe**: With the robot powered on and armed on a stand, switch off the transmitter. Verify that both foot motors and dome immediately stop (`1500 µs`), the ESP32 status LED indicates link loss, and the voice announcement says *"warning receiver disconnected"*.
+- [ ] **Test 2 — ESP32 Power Cycle / Reset**: With the receiver and motor power active, press the Reset button or power-cycle the ESP32. Verify that no motor twitches or dome rotations occur during reboot.
+- [ ] **Test 3 — Boot-Disarm Lock**: Turn on the transmitter with switch `SE` in the Armed position, then power on the ESP32. Confirm the motors remain disarmed and the log confirms an arm switch cycle is required.
 
 ---
 
 ## RC Channel Map (Radiomaster Zorro Profile)
 
-> **Note:** This channel map is specific to the Radiomaster Zorro. The architecture is designed so that future transmitter profiles (e.g., GX12, TX15 with their 6-button layouts) can use different channel assignments without rewriting core logic.
+The active channel map aligns directly with the Radiomaster Zorro EdgeTX configuration (`model09.yml`):
 
-| Channel | Function | Input Type | Notes |
-|---------|----------|-----------|-------|
-| 1 | Roll (Steering) | Stick Axis | Left/Right mixing for foot motors |
-| 2 | Pitch (Throttle) | Stick Axis | Forward/Reverse mixing for foot motors |
-| 3 | Autodome Frequency | Stick Axis | Controls how often autodome moves |
-| 4 | Yaw (Dome Rotation) | Stick Axis | Manual head rotation speed/direction |
-| 5 | Arm / Disarm | 2-pos Switch | Enables/disables foot drive motors |
-| 6 | Volume | Knob / Pot | Audio volume 0–100 |
-| 7 | Sound Index | Knob / Pot | Selects sound within current bank/page |
-| 8 | Play Trigger | 4 Momentary Buttons | Mapped to single channel; see zone logic below |
-| 9 | *(Available)* | | |
-| 10 | Speed Mode | 3-pos Switch | Slow (30%) / Medium (70%) / Fast (100%) |
-| 11 | Auto Toggle | 3-pos Momentary (Trim) | Press UP = toggle Autodome, Press DOWN = toggle Autochirp |
-| 12 | *(Available)* | | |
-| 13 | Page Select | 3-pos Switch | Page A / B / C (affects Banks 2–4 only) |
+| Channel | Function | Physical Input | Default / Safe Position | Target Peripheral / Behavior |
+|:-------:|:---------|:--------------:|:-----------------------:|:-----------------------------|
+| **CH1** | Differential Steering | Right Stick X | Center (1500 µs) | Foot Drive Motor Steering mixing |
+| **CH2** | Throttle (Forward / Reverse) | Right Stick Y | Center (1500 µs) | Foot Drive Motor Throttle mixing |
+| **CH3** | Reserved / Aux | Left Stick Y | Center (1500 µs) | Reserved for future head pitch / periscope |
+| **CH4** | Dome Yaw Rotation | Left Stick X | Center (1500 µs) | Roam-A-Dome SyRen10 Velocity (±20 µs deadband) |
+| **CH5** | Foot Drive Arm Interlock | Switch `SE` (2-pos) | UP / Disarmed (1000 µs) | Enforces boot-disarm safety lock |
+| **CH6** | Speed Mode | Switch `SB` (3-pos) | UP / Slow (1000 µs) | Slow (30%), Medium (70%), Fast (100%) |
+| **CH7** | Autodome Mode | Switch `SC` (3-pos) | UP / Off (1000 µs) | Off (1000 µs), Low Freq (1500 µs), High Freq (2000 µs) |
+| **CH8** | Master Audio Volume | Dial `S2` | Full CCW (1000 µs = 0%) | Live Audio Trigger Volume (0–99%) |
+| **CH9** | Sound Trigger Fallback | Handset Mix | Neutral (1500 µs) | Optional pulse-based sound trigger fallback |
 
-### Channel 8 — Play Trigger (6-Zone Logic)
+### Handset Sound Triggering & CRSF `0x32` Command Frames
 
-Four momentary buttons on the Zorro are mixed into a single channel. The firmware detects 6 zones based on channel value:
+Rather than packing sound buttons into analog channel slices, the **CHIRP EdgeTX Lua Dashboard** communicates directly with the ESP32 using bidirectional CRSF Command Frames (`0x32`):
 
-| Zone | Channel Range | Action |
-|------|--------------|--------|
-| 0 (Idle) | 1350 – 1650 | No action |
-| 1 | 900 – 1149 | Button SD → Bank 1 sound (on release) |
-| 2 | 1150 – 1349 | Button SA → Bank 2 sound (on release) |
-| 3 | 1650 – 1849 | Button SG → Bank 3 sound (on release) |
-| 4 | 1850 – 2000 | Button SH → Bank 4 sound (on release) |
-| 5 (Stop) | > 2000 | SD + SA held → Stop all playback (immediate) |
+- **Scroll Wheel `S1`**: Browses through tracks (1–24) in the active bank/page.
+- **Button `SD`**: Triggers Bank 1 sound.
+- **Button `SH`**: Triggers Bank 2 sound.
+- **Button `SA`**: Triggers Bank 3 sound.
+- **Button `SG`**: Triggers Bank 4 sound.
+- **Combo `SD + SA`**: Instantly halts all audio playback (`CHIRP_CMD_STOP_AUDIO`).
+- **Telemetry Backchannel**: Adjusting settings (such as motor inversion or speed limits) on Screen 3 transmits `0x32` packets back to the ESP32, which stores them into onboard NVS flash.
 
-**Key behaviors:**
-- Sound triggers fire on **button release** (transition from active zone back to idle), not on press
-- Stop All fires **immediately** when zone 5 is detected
-- An `enteredFromIdle` guard prevents accidental triggers when releasing from a two-button Stop All — the channel briefly passes through a single-button zone on its way back to center, and this guard ensures that transient is ignored
-
-### Channel 11 — Autodome/Autochirp Toggle (Momentary Trim Button)
-
-A Zorro trim button is configured as a 3-position momentary switch. The toggle fires on the **press edge** (transition from center to up/down), not on release:
-
-| Trim Direction | Channel Value | Action |
-|----------------|--------------|--------|
-| Center | ~1500 | Idle — no action |
-| Pressed UP | > 1800 | Toggle Autodome on/off |
-| Pressed DOWN | < 1200 | Toggle Autochirp on/off |
-
-This approach uses one channel for two toggle functions, freeing a physical switch for other uses.
+*(Note: For radios without Lua script support, the firmware also retains a universal fallback on **CH9** that converts pulse widths from 1050–2000 µs into any of the 288 sound coordinates).*
 
 ---
 
@@ -406,7 +485,7 @@ Allows the operator to view and modify system configuration variables directly f
 #### Telemetry Backchannel
 
 When a setting is changed, the Lua script sends the new value back to the robot via a CRSF Telemetry Push using a `COMMAND` frame (`0x32`). 
-On the Pico 2W, a custom `CRSFInterceptor` sits between the serial port and the standard CRSF library. It intercepts these `0x32` command packets, verifies their CRC, and updates the `userConfig` structure. The updated configuration is then saved persistently to the Pico's flash memory using the `LittleFS` file system so that settings survive reboots.
+The custom single-pass `CrsfLink` engine intercepts incoming `0x32` command packets, verifies their 8-bit CRC (`0xD5` polynomial), and updates the system configuration structure. The updated configuration is then saved persistently to the ESP32-S3's onboard non-volatile flash memory using the `NVS` storage manager (`storage_manager`) so that settings survive reboots.
 
 ---
 
@@ -418,17 +497,47 @@ The dome (R2-D2's head) uses a **SyRen10** motor driver managed through a **Roam
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| PWM | Pico GP12 → Roam-A-Dome PWM input | Manual velocity control from Ch 4 (Yaw stick) |
-| Serial CMD | Pico GP8/GP9 → Roam-A-Dome serial | Autodome commands (`:DPDR angle`) |
-| Serial Feedback | Roam-A-Dome → Pico GP9 | Position reports (`#DP@angle`) every 100ms |
+| PWM | ESP32-S3 GP11 → Roam-A-Dome PWM input | Manual velocity control from Ch 4 (Yaw stick) |
+| Serial CMD | ESP32-S3 GP43/GP44 → Roam-A-Dome serial | Autodome commands (`:DPDR angle`) via Hardware UART0 |
+| Serial Feedback | Roam-A-Dome → ESP32-S3 GP44 | Position reports (`#DP@angle`) every 100ms via Hardware UART0 |
 
 ### Manual Control
 
-When the Yaw stick (Ch 4) moves beyond the deadzone (±20µs from center), the raw stick value is written directly as a PWM signal to the Roam-A-Dome. Returning the stick to center stops dome rotation.
+When the Yaw stick (Ch 4) moves beyond the deadzone (±25µs from 1500µs center), the raw stick value is written directly as a 50Hz PWM signal to the Roam-A-Dome. Returning the stick to center stops dome rotation immediately.
 
 ### Autodome
 
-When autodome is active and no manual override is happening, the firmware periodically sends `:DPDR<angle>` commands (random ±90°) via the PIO UART. The frequency is controlled by Ch 3 (Autodome Frequency stick).
+When autodome is active (enabled via Switch `SC` / Ch 7) and no manual override is occurring, the firmware periodically sends `:DPDR<angle>` commands (random ±90°) via Hardware UART0. Autodome pauses instantly if manual Yaw stick input is detected.
+
+### SyRen 10 Driver Configuration & Failsafe DIP Switches
+
+When controlling the dome via 50Hz PWM (either directly from the ESP32 or passed through a Roam-A-Dome controller), **proper DIP switch configuration on the SyRen 10 is critical to prevent runaway dome rotation**.
+
+#### Recommended DIP Switch Settings (Standard R/C Mode + Timeout Failsafe):
+
+| Switch | Position | Setting | Purpose / Critical Safety Behavior |
+|:------:|:--------:|:--------|:-----------------------------------|
+| **1** | **DOWN** | Mode 2: R/C Input | Configures terminal S1 for standard 50Hz hobby servo PWM (paired with Switch 2). |
+| **2** | **UP** | Mode 2: R/C Input | Completes Mode 2 selection. |
+| **3** | **UP** | Battery Cutoff | Lithium cutoff disabled (set DOWN only if powering directly from a bare lithium battery without BMS). |
+| **4** | **UP** | **Standard R/C (Fixed 1500 µs Center)** | **CRITICAL**: Disables auto-calibration. Guarantees 1500 µs is always stopped neutral. If set DOWN (Auto-Calibrate), powering on the SyRen while the ESP32 is off or booting can cause the SyRen to calibrate on 0V and spin at full speed once 1500 µs pulses start! |
+| **5** | **UP** | Standard Single-Motor Control | Selects single-channel velocity/direction control on S1. |
+| **6** | **UP** | **R/C Timeout Failsafe ENABLED** | **CRITICAL**: Brings the dome motor to an immediate stop if PWM servo pulses are interrupted or lost. If set DOWN, the SyRen will continue running at the last commanded speed or latch onto electrical noise when the microcontroller is powered down! |
+
+```
+ SyRen 10 DIP Switch Configuration (Standard R/C + Failsafe):
+  [ON / UP]      |   2   3   4   5   6  |
+                 +----------------------+
+  [OFF / DOWN]   | 1                    |
+```
+
+> [!WARNING]
+> **DIP Switch 6 (Failsafe Timeout) MUST be UP**: If Switch 6 is left in the DOWN position, the SyRen will continue spinning the dome whenever the ESP32 is powered off, rebooting, or flashing.
+> 
+> **DIP Switch 4 (Standard R/C) MUST be UP**: Do **not** use Auto-Calibrate (Switch 4 DOWN). Microcontroller boot sequences can cause the SyRen to learn an erroneous 0V baseline as center, causing the dome to spin at full throttle on startup.
+
+> [!TIP]
+> **Floating Input Hardware Protection**: When the ESP32-S3 powers off, its GPIOs become high-impedance. To prevent the long signal wire to terminal S1 from acting as an antenna picking up EMI from motors, install a **10kΩ pull-down resistor** between SyRen terminal **S1** and **0V (GND)**. When the ESP32 is powered off, this holds S1 solidly at 0V, allowing the SyRen's Timeout Failsafe (Switch 6 UP) to immediately recognize loss of signal and clamp the motor at a complete stop.
 
 ---
 
@@ -436,31 +545,34 @@ When autodome is active and no manual override is happening, the firmware period
 
 The two foot motors use standard servo PWM signals with arcade-style tank mixing:
 
-1. **Input**: Ch 1 (Roll/Steering) and Ch 2 (Pitch/Throttle)
+1. **Input**: Ch 1 (Steering) and Ch 2 (Throttle)
 2. **Mixing**: `left = throttle + steering`, `right = throttle - steering`
-3. **Speed scaling**: Applied based on the 3-pos speed switch — Slow (30%), Medium (70%), Fast (100%)
-4. **Output**: PWM servo signals (1000–2000µs) to the motor controllers
-5. **Safety**: Motors are forced to stop (1500µs) when disarmed or when RC link is lost
+3. **Speed scaling**: Applied based on the 3-pos speed switch `SB` (Ch 6) — Slow (30%), Medium (70%), Fast (100%)
+4. **Output**: Hardware LEDC 50Hz PWM servo signals (1000–2000µs) on GP6 (Left) and GP7 (Right)
+5. **Safety**: Motors are forced to stop (1500µs neutral) when disarmed (Switch `SE`) or when RC link is lost
 
 ---
 
 ## Autodome & Autochirp
 
-Both are toggled via a single momentary trim button on Ch 11.
+Autodome and Autochirp provide autonomous life-like astromech behaviors.
 
-### Autodome Mode
+### Autodome Mode (Switch `SC` / Ch 7)
 
 When enabled, the dome periodically makes random rotations:
-- **Frequency**: Controlled by Ch 3 position (lowest = disabled, highest = every 5 seconds)
-- **Movement**: Sends `:DPDR` (random relative rotation, ±90°) to Roam-A-Dome
+- **Switch Positions**:
+  - `UP` (1000 µs): Disabled / Off
+  - `MID` (1500 µs): Low Frequency (rotations every 15–45 seconds)
+  - `DOWN` (2000 µs): High Frequency (rotations every 5–15 seconds)
+- **Movement**: Sends `:DPDR<angle>` (random relative rotation, ±90°) to Roam-A-Dome
 - **Override**: Any manual dome input (Ch 4) pauses autodome until the stick returns to center
 
 ### Autochirp Mode
 
-When enabled, the robot periodically plays a vocalization:
+When enabled, the robot periodically plays an autonomous vocalization:
 - **Interval**: Random 15–45 seconds
-- **Sound selection**: Plays whichever Bank 1 sound the operator currently has selected on the Sound Index knob (Ch 7) — this gives the operator live control over which sound autochirps
-- **Command**: Sends `PLAY:index,1,page,volume` to CHIRP_Audio
+- **Sound selection**: Plays from the active bank/page based on current sound selection
+- **Command**: Sends `PLAY:index,bank,page,volume` to CHIRP_Audio
 
 ---
 
@@ -510,35 +622,56 @@ Example announcements:
 ## File Structure
 
 ```
-CHIRP/
-├── firmware/
-│   ├── firmware.ino         # Main sketch — setup(), loop(), callbacks
-│   ├── config.h             # Pin definitions, constants, data structures
-│   ├── globals.h             # Extern declarations for shared state
-│   ├── globals.cpp           # Global variable definitions + init
-│   ├── crsf_input.h/.cpp     # ELRS/CRSF channel reading + state machine
-│   ├── drive.h/.cpp          # Foot motor arcade mixing + speed scaling
-│   ├── dome.h/.cpp           # Dome PWM + Roam-A-Dome serial + autodome
-│   ├── audio_link.h/.cpp     # CHIRP_Audio protocol, manifest sync, play/stop
-│   ├── telemetry.h/.cpp      # CRSF telemetry output (3-slot round-robin)
-│   ├── debug.h/.cpp          # Serial debug system (category filtering)
-│   └── voice_debug.h/.cpp    # Voice debug system (PVOICE phrase queue)
+CHIRP_Droid_Control/
+├── firmware/                       # Active ESP32-S3 PlatformIO project
+│   ├── platformio.ini              # Build configurations for S3-Zero & S3-DevKitC-1
+│   ├── include/
+│   │   ├── config.h                # Pin definitions, constants, data structures
+│   │   ├── types.h                 # Thread-safe data structures & command queues
+│   │   ├── crsf_link.h             # Sliding-window CRSF receiver & telemetry engine
+│   │   ├── drive_control.h         # Foot motor arcade mixing & speed scaling
+│   │   ├── dome_control.h          # Dome PWM & Roam-A-Dome UART controller
+│   │   ├── dome_lighting.h         # RSeries dome lighting SoftSerial driver
+│   │   ├── audio_link.h            # CHIRP_Audio protocol, manifest sync, play/stop
+│   │   ├── telemetry.h             # ADC1 3-battery monitor & CRSF telemetry uplink
+│   │   └── storage_manager.h       # ESP32 NVS non-volatile settings manager
+│   └── src/
+│       ├── main.cpp                # Dual-core FreeRTOS task entrypoints & RGB heartbeat
+│       ├── crsf_link.cpp
+│       ├── drive_control.cpp
+│       ├── dome_control.cpp
+│       ├── dome_lighting.cpp
+│       ├── audio_link.cpp
+│       ├── telemetry.cpp
+│       └── storage_manager.cpp
 ├── lua/
-│   └── CHIRP.lua            # EdgeTX telemetry script (dual-page dashboard)
-└── README.md                 # This document
+│   ├── CHIRP2026.lua               # Active EdgeTX Telemetry & Direct CRSF 0x32 Lua Dashboard
+│   └── legacy/
+│       └── CHIRP2.lua              # Archived legacy Lua script
+├── firmware-pico2/                 # Archived Raspberry Pi Pico 2 W prototype
+├── model09.yml                     # Reference EdgeTX model configuration (Radiomaster Zorro)
+├── DEVELOPMENT_PLAN.md             # Comprehensive roadmap, architecture & verification log
+└── README.md                       # This document
 ```
 
-### Dependencies
+### Dependencies & Toolchain
 
-| Library | Purpose | Source |
-|---------|---------|--------|
-| AlfredoCRSF | CRSF protocol parsing + telemetry | Arduino Library Manager |
-| Servo | PWM servo output for motors | Arduino-Pico core built-in |
-| SerialPIO | PIO-based UART for Roam-A-Dome | Arduino-Pico core built-in |
-| LittleFS | Flash filesystem for manifest cache | Arduino-Pico core built-in |
+| Dependency | Purpose | Target |
+|------------|---------|--------|
+| [PlatformIO](https://platformio.org/) | Embedded build system & package manager | Core build system |
+| `EspSoftwareSerial` | SoftwareSerial for Marcduino / RSeries dome lighting | PlatformIO library registry |
+| `Adafruit NeoPixel` | Onboard WS2812B RGB status pixel driver | PlatformIO library registry |
+| ESP-IDF / Arduino Core | ESP32-S3 dual-core FreeRTOS, LEDC PWM, NVS storage | PlatformIO espressif32 platform |
 
-### Build Target
+### Build Targets
 
-- **Board**: Raspberry Pi Pico 2 W
-- **Core**: [Earle Philhower Arduino-Pico](https://github.com/earlephilhower/arduino-pico)
-- **Compile**: `arduino-cli compile --fqbn rp2040:rp2040:rpipico2w firmware/`
+- **Waveshare ESP32-S3-Zero** (Default compact board):
+  ```bash
+  pio run -e esp32-s3-zero
+  pio run -e esp32-s3-zero -t upload
+  ```
+- **ESP32-S3-DevKitC-1 N16R8** (16MB Flash / 8MB Octal PSRAM):
+  ```bash
+  pio run -e esp32-s3-devkit
+  pio run -e esp32-s3-devkit -t upload
+  ```
