@@ -16,6 +16,7 @@ void audioPlaySound(uint8_t bank, char pageChar, uint8_t track, uint8_t volume);
 void audioStopAll();
 void audioSetVolume(uint8_t volume);
 void audioSetBank1Page(char pageChar);
+void audioSetMaxStreams(uint8_t maxStreams);
 void audioSendRawCommand(const char* cmd);
 
 // Manifest Lookup Helpers (1-indexed bank 1..4, 0-indexed page 0..2, 1-indexed track 1..24)

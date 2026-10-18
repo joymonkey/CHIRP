@@ -61,6 +61,7 @@
  * LIST : Get a list of Sound Banks and Pages
  * GNME : Get Name of a sound in a provided sound bank and page
  * STAT : display the Status of each stream
+ * STRM : set maximum simultaneous audio streams (1-10)
  * MUSB : MSC USB mode (SD card contents will be accessible via USB)
  *
  * Legacy MP3 Trigger Serial Commands:

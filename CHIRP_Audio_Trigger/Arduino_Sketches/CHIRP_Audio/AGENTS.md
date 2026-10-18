@@ -110,6 +110,7 @@ On `Serial2`, a 150 ms silence timeout discards any stale un-terminated line buf
 | `GNME:bank,page,index` | `NAME:bank,page,index,<file>` (Bank 1 always appends `.wav`) |
 | `LIST`, `STAT:<stream>` | human-readable / `STAT:playing,<file>,<vol>` |
 | `BAUD:<rate>`, `BPAGE:<A-Z>` | persisted to INI; BPAGE needs reboot |
+| `STRM:<1-10>` (or `MSTRM:<1-10>`) | `PACK:STRM`, `STRM:<n>`; updates `maxStreams` live & persists to INI |
 | `MUSB` / `MUSB:1` / `MUSB:0`, `CCRC`, `PVOICE:<clip>` | `PACK:...` |
 
 Stream selection for PLAY: first inactive stream, else **steals stream 0**. Volume mapping: protocol 0–99 → `float 0..1`; legacy `v` 0 (loud)–255 (silent); `masterAttenMultiplier` is 0–256 fixed-point.

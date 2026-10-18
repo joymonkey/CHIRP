@@ -51,6 +51,7 @@ using namespace libhelix;
 // Audio Configuration
 #define SAMPLE_RATE 44100
 #define DEFAULT_MAX_STREAMS 3
+#define MAX_ALLOWED_STREAMS 10
 #define DEFAULT_STREAM_BUFFER_KB 512
 
 // Bank/File Limits
@@ -419,6 +420,7 @@ void stopAllStreams(Stream *replySerial = nullptr);
 bool checkDoubleTapSilence(Stream *replySerial, uint32_t triggerSignature);
 void fillStreamBuffers(); // Main loop task
 void initAudioSystem();
+bool setMaxStreams(int newMax);
 void playChirp(int startFreq, int endFreq, int durationMs, uint8_t vol);
 
 // from mp3_compat.cpp (MP3 Trigger Compat)

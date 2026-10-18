@@ -88,6 +88,7 @@ struct RobotConfig {
     uint8_t speedSlowPct     = 30;
     uint8_t speedMedPct      = 70;
     uint8_t speedFastPct     = 100;
+    uint8_t maxAudioStreams  = 3;
 };
 
 // ============================================================================

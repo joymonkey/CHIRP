@@ -237,8 +237,9 @@ void audioLinkInit() {
                   PIN_AUDIO_RX, PIN_AUDIO_TX, (unsigned long)AUDIO_BAUD_RATE);
     Serial.flush();
 
-    // Send initial Bank 1 Page config and request sound manifest
+    // Send initial Bank 1 Page and Max Streams config, then request sound manifest
     audioSetBank1Page(g_robotConfig.bank1Page);
+    audioSetMaxStreams(g_robotConfig.maxAudioStreams);
     audioRequestManifestSync();
 
     // Queue boot voice announcement
@@ -364,6 +365,12 @@ void audioSetBank1Page(char pageChar) {
     char p = (pageChar >= 'A' && pageChar <= AUDIO_MAX_PAGE_CHAR) ? pageChar : 'A';
     Serial2.printf("BPAGE:%c\n", p);
     Serial.printf("[AUDIO] TX -> BPAGE:%c\n", p);
+}
+
+void audioSetMaxStreams(uint8_t maxStreams) {
+    uint8_t clamped = (uint8_t)constrain(maxStreams, 1, 10);
+    Serial2.printf("STRM:%u\n", (unsigned)clamped);
+    Serial.printf("[AUDIO] TX -> STRM:%u\n", (unsigned)clamped);
 }
 
 void audioSendRawCommand(const char* cmd) {

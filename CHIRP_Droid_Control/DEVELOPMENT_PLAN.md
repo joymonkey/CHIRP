@@ -114,7 +114,7 @@ CHIRP Droid Control replaces external CRSF libraries with a purpose-built, singl
     crossfireTelemetryPush(0x32, { 0xC8, 0xEA, 0xA1, bank, pageIdx, trackIdx })
     ```
   - Pressing `SA + SD` together sends `Cmd=0xA2 (STOP_AUDIO)` to immediately halt audio playback.
-  - Adjusting droid settings in the Lua menu sends `ParamID (1..9)` with `[ParamID, Value]`.
+  - Adjusting droid settings in the Lua menu sends `ParamID (1..10)` with `[ParamID, Value]`.
 - **Why Direct CRSF Command Frames Are Superior**:
   - **Zero Quantization or Threshold Errors**: Sends exact binary integers `(Bank, Page, Track)` protected by an 8-bit hardware CRC (`0xD5` polynomial).
   - **Zero EdgeTX Mixer Overhead**: No need to configure Global Variables (`GV1`) or custom channel mixers on the radio just to pass data from Lua into an RC channel.

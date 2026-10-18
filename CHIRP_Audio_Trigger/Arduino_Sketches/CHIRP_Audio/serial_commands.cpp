@@ -392,6 +392,20 @@ void handleBpage(Stream &serial, char* args) {
     }
 }
 
+void handleStrm(Stream &serial, char* args) {
+    int val = atoi(args);
+    if (val >= 1 && val <= MAX_ALLOWED_STREAMS) {
+        if (val != maxStreams) {
+            setMaxStreams(val);
+            writeIniFile();
+        }
+        sendSerialResponse(serial, "PACK:STRM");
+        sendSerialResponseF(serial, "STRM:%d", maxStreams);
+    } else {
+        serial.println("ERR:PARAM - Invalid max streams (1-10)");
+    }
+}
+
 void handleMusb(Stream &serial, char* args) {
     // Check for explicit argument 0 or 1
     if (args[0] == ':') {
@@ -525,6 +539,12 @@ void processSerialCommands(Stream &serial) {
                 }
                 else if (strncmp(cmdBuffer, "BPAGE:", 6) == 0) {
                     handleBpage(serial, cmdBuffer + 6);
+                }
+                else if (strncmp(cmdBuffer, "STRM:", 5) == 0) {
+                    handleStrm(serial, cmdBuffer + 5);
+                }
+                else if (strncmp(cmdBuffer, "MSTRM:", 6) == 0) {
+                    handleStrm(serial, cmdBuffer + 6);
                 }
                 else if (strncmp(cmdBuffer, "MUSB", 4) == 0) {
                     handleMusb(serial, cmdBuffer + 4); // Handles :1, :0 or empty (toggle)

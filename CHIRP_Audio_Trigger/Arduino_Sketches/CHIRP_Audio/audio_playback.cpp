@@ -112,14 +112,16 @@ void initAudioSystem() {
     Serial.printf("Initializing Audio System: %d Streams, Buffer %d KB (Mask: 0x%X)\n", maxStreams, (streamBufferSize * 2) / 1024, streamBufferMask);
 
 
-    // 1. Allocate Array Structures
-    streams = new AudioStream[maxStreams];
-    streamBuffers = new RingBuffer[maxStreams];
-    mp3Decoders = new MP3DecoderHelix*[maxMp3Decoders];
-    mp3DecoderInUse = new bool[maxMp3Decoders];
+    // 1. Allocate Array Structures (Sized for MAX_ALLOWED_STREAMS to support live runtime changes)
+    streams = new AudioStream[MAX_ALLOWED_STREAMS];
+    streamBuffers = new RingBuffer[MAX_ALLOWED_STREAMS];
+    mp3Decoders = new MP3DecoderHelix*[MAX_ALLOWED_STREAMS];
+    mp3DecoderInUse = new bool[MAX_ALLOWED_STREAMS];
+    aacDecoders = new AACDecoderHelix*[MAX_ALLOWED_STREAMS];
+    aacDecoderInUse = new bool[MAX_ALLOWED_STREAMS];
 
-    // Initialize Streams
-    for (int i = 0; i < maxStreams; i++) {
+    // Initialize all stream slots & decoder flags
+    for (int i = 0; i < MAX_ALLOWED_STREAMS; i++) {
         streams[i].active = false;
         streams[i].type = STREAM_TYPE_INACTIVE;
         streams[i].volume = 1.0f;
@@ -128,8 +130,19 @@ void initAudioSystem() {
         streams[i].stopRequested = false;
         streams[i].fileFinished = false;
         streams[i].progmemData = nullptr;
-        
-        // Allocate Buffer
+        streams[i].ringBuffer->buffer = nullptr;
+        streams[i].ringBuffer->readPos = 0;
+        streams[i].ringBuffer->writePos = 0;
+        streams[i].ringBuffer->bufferMask = (i == 0) ? (32768 - 1) : streamBufferMask;
+
+        mp3DecoderInUse[i] = false;
+        mp3Decoders[i] = nullptr; // Will be allocated later in setup() or setMaxStreams()
+        aacDecoderInUse[i] = false;
+        aacDecoders[i] = nullptr;
+    }
+
+    // Allocate Ring Buffers for initial configured maxStreams
+    for (int i = 0; i < maxStreams; i++) {
         if (i == 0) {
             // STATIC BUFFER LIMIT FOR PROGMEM STREAM
             // 32K samples * 2 bytes = 64KB Standard RAM
@@ -164,20 +177,81 @@ void initAudioSystem() {
         }
         delay(10); // Prevent power spike / bus contention during burst allocation
     }
-    
-    // Initialize Decoder Pool Flags
-    for (int i = 0; i < maxMp3Decoders; i++) {
-        mp3DecoderInUse[i] = false;
-        mp3Decoders[i] = nullptr; // Will be allocated later in setup()
+}
+
+// ===================================
+// Dynamically Update Max Streams at Runtime
+// ===================================
+bool setMaxStreams(int newMax) {
+    if (newMax < 1) newMax = 1;
+    if (newMax > MAX_ALLOWED_STREAMS) newMax = MAX_ALLOWED_STREAMS;
+
+    if (!streams) {
+        maxStreams = newMax;
+        maxMp3Decoders = newMax;
+        return true;
     }
-    
-    // Initialize AAC Decoder Pool Flags (using same count as MP3 for now)
-    aacDecoders = new AACDecoderHelix*[maxMp3Decoders];
-    aacDecoderInUse = new bool[maxMp3Decoders];
-    for (int i = 0; i < maxMp3Decoders; i++) {
-        aacDecoderInUse[i] = false;
-        aacDecoders[i] = nullptr; 
+
+    if (newMax < maxStreams) {
+        // Stop any active streams above the new limit before lowering maxStreams
+        for (int i = newMax; i < maxStreams; i++) {
+            stopStream(i);
+        }
+        maxStreams = newMax;
+        maxMp3Decoders = newMax;
+        return true;
+    } else if (newMax > maxStreams) {
+        float currentVol = streams[0].volume;
+        int allocatedUpTo = maxStreams;
+
+        for (int i = maxStreams; i < newMax; i++) {
+            // 1. Allocate PSRAM ring buffer if not yet allocated
+            if (!streams[i].ringBuffer->buffer) {
+                streams[i].ringBuffer->bufferMask = streamBufferMask;
+                streams[i].ringBuffer->buffer = (int16_t*)pmalloc(streamBufferSize * sizeof(int16_t));
+                if (!streams[i].ringBuffer->buffer) {
+                    Serial.printf("Stream %d: ERROR - PSRAM Buffer Allocation Failed!\n", i);
+                    break;
+                }
+                streams[i].ringBuffer->clear();
+                delay(10);
+            }
+
+            // 2. Allocate MP3 decoder in PSRAM if not yet allocated
+            if (!mp3Decoders[i]) {
+                void* mp3Mem = pmalloc(sizeof(MP3DecoderHelix));
+                if (!mp3Mem) {
+                    Serial.printf("Stream %d: ERROR - PSRAM MP3 Decoder Allocation Failed!\n", i);
+                    break;
+                }
+                mp3Decoders[i] = new (mp3Mem) MP3DecoderHelix(mp3DataCallback);
+                mp3DecoderInUse[i] = false;
+            }
+
+            // 3. Allocate AAC decoder in PSRAM if not yet allocated
+            if (!aacDecoders[i]) {
+                delay(10);
+                void* aacMem = pmalloc(sizeof(AACDecoderHelix));
+                if (!aacMem) {
+                    Serial.printf("Stream %d: ERROR - PSRAM AAC Decoder Allocation Failed!\n", i);
+                    break;
+                }
+                aacDecoders[i] = new (aacMem) AACDecoderHelix(aacDataCallback);
+                aacDecoderInUse[i] = false;
+            }
+
+            streams[i].volume = currentVol;
+            streams[i].active = false;
+            streams[i].type = STREAM_TYPE_INACTIVE;
+            allocatedUpTo = i + 1;
+        }
+
+        maxMp3Decoders = allocatedUpTo;
+        maxStreams = allocatedUpTo;
+        return (allocatedUpTo == newMax);
     }
+
+    return true;
 }
 
 // Simple inline helpers

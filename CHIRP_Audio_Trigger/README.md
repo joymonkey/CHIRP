@@ -33,6 +33,7 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `CCRC` (reset manifest checksum)
 - `BAUD:<rate>` (change the serial baud rate - 2400, 9600, 19200, 38400, 57600 or 115200; persists to CHIRP.INI)
 - `BPAGE:<page>` (change the default page for Bank 1 - requires reboot after changing)
+- `STRM:<count>` (set the maximum number of simultaneous audio streams, 1–10; takes effect immediately and persists to CHIRP.INI)
 - `MUSB` / `MUSB:1` / `MUSB:0` (enable/disable Mass Storage Class for USB - to access the SD card over USB)
 
 # Button Actions

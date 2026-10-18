@@ -499,8 +499,8 @@ void CrsfLink::handleCommandFrame(const uint8_t* payload, uint8_t payloadLen) {
         return;
     }
 
-    // 6. Configuration Parameter Update (IDs 1..9 from Lua Settings Screen)
-    if (cmdId >= 1 && cmdId <= 9 && payloadLen >= 4) {
+    // 6. Configuration Parameter Update (IDs 1..10 from Lua Settings Screen)
+    if (cmdId >= 1 && cmdId <= 10 && payloadLen >= 4) {
         uint8_t rawVal = payload[3];
         Serial.printf("[CFG] CRSF Setting Update -> Param %u = %u\n", cmdId, rawVal);
 

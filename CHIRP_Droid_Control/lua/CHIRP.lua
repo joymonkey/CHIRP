@@ -65,18 +65,19 @@ local btnState = {
     comboActive = false
 }
 
--- Page 3 Menu Items (Includes [back to pg1] at top & bottom, NVS Settings IDs 1..9, and Re-Sync Audio)
+-- Page 3 Menu Items (Includes [back to pg1] at top & bottom, NVS Settings IDs 1..10, and Re-Sync Audio)
 local menuItems = {
     { type = "nav_pg1",   name = "[back to pg1]" },
-    { id = 1, name = "Bank 1 Page",   type = "char", val = 65,  min = 65,   max = 70  },
-    { id = 2, name = "Dome Offset",   type = "int",  val = 0,   min = -127, max = 127 },
-    { id = 3, name = "Dome Invert",   type = "bool", val = 0,   min = 0,    max = 1   },
-    { id = 4, name = "Voice Debug",   type = "bool", val = 1,   min = 0,    max = 1   },
-    { id = 5, name = "L Motor Inv",   type = "bool", val = 0,   min = 0,    max = 1   },
-    { id = 6, name = "R Motor Inv",   type = "bool", val = 0,   min = 0,    max = 1   },
-    { id = 7, name = "Speed Slow",    type = "int",  val = 30,  min = 0,    max = 100 },
-    { id = 8, name = "Speed Med",     type = "int",  val = 70,  min = 0,    max = 100 },
-    { id = 9, name = "Speed Fast",    type = "int",  val = 100, min = 0,    max = 100 },
+    { id = 1,  name = "Bank 1 Page", type = "char", val = 65,  min = 65,   max = 70  },
+    { id = 10, name = "Max Streams", type = "int",  val = 3,   min = 1,    max = 10  },
+    { id = 2,  name = "Dome Offset", type = "int",  val = 0,   min = -127, max = 127 },
+    { id = 3,  name = "Dome Invert", type = "bool", val = 0,   min = 0,    max = 1   },
+    { id = 4,  name = "Voice Debug", type = "bool", val = 1,   min = 0,    max = 1   },
+    { id = 5,  name = "L Motor Inv", type = "bool", val = 0,   min = 0,    max = 1   },
+    { id = 6,  name = "R Motor Inv", type = "bool", val = 0,   min = 0,    max = 1   },
+    { id = 7,  name = "Speed Slow",  type = "int",  val = 30,  min = 0,    max = 100 },
+    { id = 8,  name = "Speed Med",   type = "int",  val = 70,  min = 0,    max = 100 },
+    { id = 9,  name = "Speed Fast",  type = "int",  val = 100, min = 0,    max = 100 },
     { type = "sync_audio", name = "Re-Sync Audio" },
     { type = "nav_pg1",    name = "[back to pg1]" }
 }
