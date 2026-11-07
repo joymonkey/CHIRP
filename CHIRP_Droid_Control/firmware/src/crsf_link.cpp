@@ -165,6 +165,7 @@ void CrsfLink::update() {
             _prevArmed         = false;
             _speedLockedToSlow = false;
             _prevSpeedMode     = SpeedMode::SLOW;
+            _luaVolumeActive   = false;
             _ch9Latched        = true;
             _ch9StableCount    = 0;
         }
@@ -256,9 +257,15 @@ void CrsfLink::evaluateSwitchesAndTriggers(const uint16_t channelsUs[17]) {
     if (autoDomeCh < 1300)      newAutoDome = AutoDomeMode::OFF;
     else if (autoDomeCh > 1700) newAutoDome = AutoDomeMode::MORE_FREQUENT;
 
-    // 4. Master Volume Dial S2 (CH8: 1000..2000us -> 0..99%)
-    int32_t volPct = map((long)constrain(channelsUs[RC_CH_MASTER_VOLUME], 1000, 2000), 1000, 2000, 0, 99);
-    uint8_t newVolume = (uint8_t)constrain(volPct, 0, 99);
+    // 4. Master Volume Dial S2 Fallback on CH8 (<=1005us -> 0% mute, 1006..2000us -> 1..99%)
+    //    When CHIRP.lua is active on the transmitter, it sends exact 0..99 S2 values via 0xA6,
+    //    bypassing any CH8 mixer offsets/limits.
+    uint8_t newVolume = 0;
+    int32_t volUs     = (int32_t)channelsUs[RC_CH_MASTER_VOLUME];
+    if (volUs > 1005) {
+        int32_t clampedVolUs = constrain(volUs, 1006, 2000);
+        newVolume = (uint8_t)constrain(1 + ((clampedVolUs - 1006) * 98 + 497) / 994, 1, 99);
+    }
 
     bool      armedNow           = false;
     bool      safeSeen           = false;
@@ -316,7 +323,9 @@ void CrsfLink::evaluateSwitchesAndTriggers(const uint16_t channelsUs[17]) {
 
         g_robotState.speedMode    = effectiveSpeedMode;
         g_robotState.autoDomeMode = newAutoDome;
-        g_robotState.masterVolume = newVolume;
+        if (!_luaVolumeActive) {
+            g_robotState.masterVolume = newVolume;
+        }
         unlockState();
     }
 
@@ -367,14 +376,17 @@ void CrsfLink::evaluateSwitchesAndTriggers(const uint16_t channelsUs[17]) {
         Serial.printf("[MODE] AutoDome -> %s\n", adStr);
     }
 
-    // Queue volume update when dial changes by >= 2%
-    if (_prevVolume == 255 || abs((int)newVolume - (int)_prevVolume) >= 2) {
-        _prevVolume = newVolume;
-        if (g_commandQueue != nullptr) {
-            SystemCommand cmd = {};
-            cmd.type = CommandType::SET_VOLUME;
-            cmd.paramValue = newVolume;
-            xQueueSend(g_commandQueue, &cmd, 0);
+    // Queue CH8 fallback volume update only when Lua direct volume (0xA6) is not active
+    if (!_luaVolumeActive) {
+        if (_prevVolume == 255 ||
+            abs((int)newVolume - (int)_prevVolume) >= 1) {
+            _prevVolume = newVolume;
+            if (g_commandQueue != nullptr) {
+                SystemCommand cmd = {};
+                cmd.type = CommandType::SET_VOLUME;
+                cmd.paramValue = newVolume;
+                xQueueSend(g_commandQueue, &cmd, 0);
+            }
         }
     }
 
@@ -407,10 +419,11 @@ void CrsfLink::evaluateSwitchesAndTriggers(const uint16_t channelsUs[17]) {
 
             if (g_commandQueue != nullptr) {
                 SystemCommand cmd = {};
-                cmd.type  = CommandType::PLAY_SOUND;
-                cmd.bank  = bank;
-                cmd.page  = page;
-                cmd.track = track;
+                cmd.type       = CommandType::PLAY_SOUND;
+                cmd.bank       = bank;
+                cmd.page       = page;
+                cmd.track      = track;
+                cmd.paramValue = -1;
                 xQueueSend(g_commandQueue, &cmd, 0);
             }
         }
@@ -426,20 +439,46 @@ void CrsfLink::handleCommandFrame(const uint8_t* payload, uint8_t payloadLen) {
 
     uint8_t cmdId = payload[2];
 
-    // 1. Direct Sound Trigger from EdgeTX Lua: [0xC8, 0xEA, 0xA1, Bank, Page, Track]
+    // 1. Direct Sound Trigger from EdgeTX Lua: [0xC8, 0xEA, 0xA1, Bank, Page, Track, (Optional UI Vol)]
     if (cmdId == CHIRP_CMD_PLAY_SOUND && payloadLen >= 6) {
-        uint8_t bank = payload[3];
-        char page    = (payload[4] >= 'A' && payload[4] <= 'Z') ? (char)payload[4] : (char)('A' + (payload[4] % 3));
+        uint8_t bank  = payload[3];
+        char    page  = (payload[4] >= 'A' && payload[4] <= 'Z') ? (char)payload[4] : (char)('A' + (payload[4] % AUDIO_MAX_PAGES));
         uint8_t track = payload[5];
+        int16_t uiVol = (payloadLen >= 7) ? (int16_t)constrain(payload[6], 0, 99) : -1;
+
+        if (uiVol >= 0) {
+            _luaVolumeActive = true;
+            _prevVolume      = (uint8_t)uiVol;
+        }
 
         Serial.printf("[TRIG] CRSF Direct 0x32 Play -> Bank %u, Page %c, Track %u\n", bank, page, track);
 
         if (g_commandQueue != nullptr) {
             SystemCommand cmd = {};
-            cmd.type  = CommandType::PLAY_SOUND;
-            cmd.bank  = bank;
-            cmd.page  = page;
-            cmd.track = track;
+            cmd.type       = CommandType::PLAY_SOUND;
+            cmd.bank       = bank;
+            cmd.page       = page;
+            cmd.track      = track;
+            cmd.paramValue = uiVol;
+            xQueueSend(g_commandQueue, &cmd, 0);
+        }
+        return;
+    }
+
+    // 1b. Direct Master Volume Update from EdgeTX Lua S2 Dial: [0xC8, 0xEA, 0xA6, Vol(0..99)]
+    if (cmdId == CHIRP_CMD_SET_VOLUME && payloadLen >= 4) {
+        uint8_t uiVol = (uint8_t)constrain(payload[3], 0, 99);
+        _luaVolumeActive = true;
+        _prevVolume      = uiVol;
+
+        if (lockState(pdMS_TO_TICKS(2))) {
+            g_robotState.masterVolume = uiVol;
+            unlockState();
+        }
+        if (g_commandQueue != nullptr) {
+            SystemCommand cmd = {};
+            cmd.type       = CommandType::SET_VOLUME;
+            cmd.paramValue = uiVol;
             xQueueSend(g_commandQueue, &cmd, 0);
         }
         return;
@@ -499,8 +538,8 @@ void CrsfLink::handleCommandFrame(const uint8_t* payload, uint8_t payloadLen) {
         return;
     }
 
-    // 6. Configuration Parameter Update (IDs 1..10 from Lua Settings Screen)
-    if (cmdId >= 1 && cmdId <= 10 && payloadLen >= 4) {
+    // 6. Configuration Parameter Update (IDs 1..11 from Lua Settings Screen)
+    if (cmdId >= 1 && cmdId <= 11 && payloadLen >= 4) {
         uint8_t rawVal = payload[3];
         Serial.printf("[CFG] CRSF Setting Update -> Param %u = %u\n", cmdId, rawVal);
 

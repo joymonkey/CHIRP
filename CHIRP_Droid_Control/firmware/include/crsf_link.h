@@ -22,11 +22,12 @@ constexpr uint8_t CRSF_FRAMETYPE_FLIGHT_MODE    = 0x21;
 constexpr uint8_t CRSF_FRAMETYPE_COMMAND        = 0x32;
 
 // CHIRP Direct Command Sub-IDs (inside Frame 0x32: [0xC8, 0xEA, SubCmd, ...])
-constexpr uint8_t CHIRP_CMD_PLAY_SOUND          = 0xA1; // Payload: [0xC8, 0xEA, 0xA1, Bank, PageChar, Track]
+constexpr uint8_t CHIRP_CMD_PLAY_SOUND          = 0xA1; // Payload: [0xC8, 0xEA, 0xA1, Bank, PageChar, Track, (Vol)]
 constexpr uint8_t CHIRP_CMD_STOP_AUDIO          = 0xA2; // Payload: [0xC8, 0xEA, 0xA2]
 constexpr uint8_t CHIRP_CMD_DOME_LIGHT          = 0xA3; // Payload: [0xC8, 0xEA, 0xA3, ...Marcduino string...]
-constexpr uint8_t CHIRP_CMD_SET_PAGE            = 0xA4; // Payload: [0xC8, 0xEA, 0xA4, PageChar ('A'/'B'/'C')]
+constexpr uint8_t CHIRP_CMD_SET_PAGE            = 0xA4; // Payload: [0xC8, 0xEA, 0xA4, PageChar ('A'..'F')]
 constexpr uint8_t CHIRP_CMD_SYNC_MANIFEST       = 0xA5; // Payload: [0xC8, 0xEA, 0xA5]
+constexpr uint8_t CHIRP_CMD_SET_VOLUME          = 0xA6; // Payload: [0xC8, 0xEA, 0xA6, Vol(0..99)]
 
 // ============================================================================
 // Packed CRSF Structs
@@ -123,6 +124,7 @@ private:
     SpeedMode       _prevSpeedMode       = SpeedMode::SLOW;
     AutoDomeMode    _prevAutoDome        = AutoDomeMode::OFF;
     uint8_t         _prevVolume          = 255;
+    bool            _luaVolumeActive     = false;
 
     // CH9 Fallback Sound Trigger state (starts latched=true until idle <1025us is seen)
     bool            _ch9Latched       = true;

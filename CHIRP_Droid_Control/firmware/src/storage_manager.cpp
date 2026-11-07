@@ -3,6 +3,9 @@
 #include <Preferences.h>
 
 extern RobotConfig g_robotConfig;
+extern RobotState  g_robotState;
+extern bool        lockState(TickType_t timeoutTicks);
+extern void        unlockState();
 
 static Preferences s_prefs;
 static constexpr const char* NVS_NAMESPACE = "chirp_cfg";
@@ -26,10 +29,12 @@ void storageManagerInit() {
     g_robotConfig.speedMedPct      = (uint8_t)constrain(s_prefs.getUChar("spdMed",  70), 0, 100);
     g_robotConfig.speedFastPct     = (uint8_t)constrain(s_prefs.getUChar("spdFast", 100), 0, 100);
     g_robotConfig.maxAudioStreams  = (uint8_t)constrain(s_prefs.getUChar("maxStrm", 3), 1, 10);
+    g_robotConfig.volumeMin        = (uint8_t)constrain(s_prefs.getUChar("volMin",  18), 0, 50);
 
-    Serial.printf("[NVS] Config loaded (B1Page=%c, MaxStrm=%u, DomeOff=%d, DomeInv=%u, Voice=%u, LInv=%u, RInv=%u, Spd=%u/%u/%u%%)\n",
+    Serial.printf("[NVS] Config loaded (B1Page=%c, MaxStrm=%u, VolMin=%u, DomeOff=%d, DomeInv=%u, Voice=%u, LInv=%u, RInv=%u, Spd=%u/%u/%u%%)\n",
                   g_robotConfig.bank1Page,
                   g_robotConfig.maxAudioStreams,
+                  g_robotConfig.volumeMin,
                   (int)g_robotConfig.domeOffset,
                   g_robotConfig.domeInvert ? 1 : 0,
                   g_robotConfig.voiceDebug ? 1 : 0,
@@ -51,6 +56,7 @@ void storageManagerSave() {
     s_prefs.putUChar("spdMed",  g_robotConfig.speedMedPct);
     s_prefs.putUChar("spdFast", g_robotConfig.speedFastPct);
     s_prefs.putUChar("maxStrm", g_robotConfig.maxAudioStreams);
+    s_prefs.putUChar("volMin",  g_robotConfig.volumeMin);
     Serial.println("[NVS] Configuration saved to flash.");
 }
 
@@ -91,6 +97,17 @@ void storageManagerUpdateSetting(uint8_t paramId, int16_t rawVal) {
             uint8_t streams = (uint8_t)constrain(rawVal, 1, 10);
             g_robotConfig.maxAudioStreams = streams;
             audioSetMaxStreams(streams);
+            break;
+        }
+        case 11: {
+            uint8_t minVol = (uint8_t)constrain(rawVal, 0, 50);
+            g_robotConfig.volumeMin = minVol;
+            uint8_t curUiVol = 50;
+            if (lockState(pdMS_TO_TICKS(2))) {
+                curUiVol = g_robotState.masterVolume;
+                unlockState();
+            }
+            audioSetVolume(curUiVol);
             break;
         }
         default:

@@ -105,7 +105,13 @@ void taskCommunications(void* pvParameters) {
             switch (cmd.type) {
                 case CommandType::PLAY_SOUND: {
                     uint8_t vol = 50;
-                    if (lockState(pdMS_TO_TICKS(2))) {
+                    if (cmd.paramValue >= 0 && cmd.paramValue <= 99) {
+                        vol = (uint8_t)cmd.paramValue;
+                        if (lockState(pdMS_TO_TICKS(2))) {
+                            g_robotState.masterVolume = vol;
+                            unlockState();
+                        }
+                    } else if (lockState(pdMS_TO_TICKS(2))) {
                         vol = g_robotState.masterVolume;
                         unlockState();
                     }
@@ -338,7 +344,7 @@ void loop() {
         const char* audStr = (g_audioSyncState == AudioSyncState::COMPLETE) ? "OK" :
                              (g_audioSyncState == AudioSyncState::FETCHING_NAMES) ? "NAMES" : "WAIT";
 
-        Serial.printf("[HB] Up:%lus | Link:%s (LQ:%u%% %ddBm RX:%lu TX:%lu) | Arm:%s | Spd:%s | Vol:%u%% | "
+        Serial.printf("[HB] Up:%lus | Link:%s (LQ:%u%% %ddBm RX:%lu TX:%lu) | Arm:%s | Spd:%s | Vol:%u%%(CH8:%uus Min:%u) | "
                       "Aud:%s(Pg%c) | Batt:%.1f/%.1f/%.1fV | PWM L:%u R:%u D:%u\n",
                       (unsigned long)(nowMs / 1000),
                       snap.rcLinkUp ? "UP" : "DOWN",
@@ -349,6 +355,8 @@ void loop() {
                       snap.isArmed ? "YES" : "NO",
                       spdStr,
                       snap.masterVolume,
+                      snap.rcChannelsUs[RC_CH_MASTER_VOLUME],
+                      g_robotConfig.volumeMin,
                       audStr,
                       snap.activePage,
                       snap.battery1Volts,

@@ -328,6 +328,19 @@ void audioLinkUpdate() {
     }
 }
 
+// Maps UI volume (0..99) to hardware CHIRP_Audio volume:
+//   - UI 00   -> 0 (True Mute)
+//   - UI 01..99 -> Linearly scaled across [g_robotConfig.volumeMin .. 99]
+static uint8_t scaleVolumeToHardware(uint8_t uiVolume) {
+    uint8_t clampedUi = (uint8_t)constrain(uiVolume, 0, 99);
+    if (clampedUi == 0) {
+        return 0;
+    }
+    uint8_t minVol = (uint8_t)constrain(g_robotConfig.volumeMin, 0, 90);
+    uint32_t hwVol = minVol + (((uint32_t)(clampedUi - 1) * (99 - minVol) + 49) / 98);
+    return (uint8_t)constrain(hwVol, minVol, 99);
+}
+
 void audioPlaySound(uint8_t bank, char pageChar, uint8_t track, uint8_t volume) {
     uint8_t clampedBank = (uint8_t)constrain(bank, 1, AUDIO_MAX_BANKS);
     char    clampedPage = (pageChar >= 'A' && pageChar <= AUDIO_MAX_PAGE_CHAR) ? pageChar : 'A';
@@ -336,18 +349,19 @@ void audioPlaySound(uint8_t bank, char pageChar, uint8_t track, uint8_t volume) 
         clampedPage = (g_robotConfig.bank1Page >= 'A' && g_robotConfig.bank1Page <= AUDIO_MAX_PAGE_CHAR)
                       ? g_robotConfig.bank1Page : 'A';
     }
-    uint8_t clampedVol = (uint8_t)constrain(volume, 0, 99);
+    uint8_t hwVol = scaleVolumeToHardware(volume);
 
     Serial2.printf("PLAY:%u,%u,%c,%u\n",
                    (unsigned)track,
                    (unsigned)clampedBank,
                    clampedPage,
-                   (unsigned)clampedVol);
-    Serial.printf("[AUDIO] TX -> PLAY:%u,%u,%c,%u\n",
+                   (unsigned)hwVol);
+    Serial.printf("[AUDIO] TX -> PLAY:%u,%u,%c,%u (UI Vol:%02u)\n",
                   (unsigned)track,
                   (unsigned)clampedBank,
                   clampedPage,
-                  (unsigned)clampedVol);
+                  (unsigned)hwVol,
+                  (unsigned)constrain(volume, 0, 99));
 }
 
 void audioStopAll() {
@@ -356,9 +370,11 @@ void audioStopAll() {
 }
 
 void audioSetVolume(uint8_t volume) {
-    uint8_t clampedVol = (uint8_t)constrain(volume, 0, 99);
-    Serial2.printf("VOL:%u\n", (unsigned)clampedVol);
-    Serial.printf("[AUDIO] TX -> VOL:%u\n", (unsigned)clampedVol);
+    uint8_t hwVol = scaleVolumeToHardware(volume);
+    Serial2.printf("VOL:%u\n", (unsigned)hwVol);
+    Serial.printf("[AUDIO] TX -> VOL:%u (UI Vol:%02u)\n",
+                  (unsigned)hwVol,
+                  (unsigned)constrain(volume, 0, 99));
 }
 
 void audioSetBank1Page(char pageChar) {

@@ -19,6 +19,7 @@ local CHIRP_CMD_PLAY_SOUND = 0xA1
 local CHIRP_CMD_STOP_AUDIO = 0xA2
 local CHIRP_CMD_SET_PAGE   = 0xA4
 local CHIRP_CMD_SYNC_MAN   = 0xA5
+local CHIRP_CMD_SET_VOLUME = 0xA6
 
 local ALL_PAGES = { 'A', 'B', 'C', 'D', 'E', 'F' }
 
@@ -55,6 +56,8 @@ local lastTrigBank    = 0
 local lastTrigTime    = 0
 local lastStopTime    = 0
 local lastSyncReqTime = 0
+local lastSentVolume  = -1
+local lastVolPushTime = 0
 
 -- Momentary Button Edge & Combo State (SD=Bank1, SH=Bank2, SA=Bank3, SG=Bank4, SA+SD=Stop)
 local btnState = {
@@ -65,11 +68,12 @@ local btnState = {
     comboActive = false
 }
 
--- Page 3 Menu Items (Includes [back to pg1] at top & bottom, NVS Settings IDs 1..10, and Re-Sync Audio)
+-- Page 3 Menu Items (Includes [back to pg1] at top & bottom, NVS Settings IDs 1..11, and Re-Sync Audio)
 local menuItems = {
     { type = "nav_pg1",   name = "[back to pg1]" },
     { id = 1,  name = "Bank 1 Page", type = "char", val = 65,  min = 65,   max = 70  },
     { id = 10, name = "Max Streams", type = "int",  val = 3,   min = 1,    max = 10  },
+    { id = 11, name = "Min Volume",  type = "int",  val = 18,  min = 0,    max = 50  },
     { id = 2,  name = "Dome Offset", type = "int",  val = 0,   min = -127, max = 127 },
     { id = 3,  name = "Dome Invert", type = "bool", val = 0,   min = 0,    max = 1   },
     { id = 4,  name = "Voice Debug", type = "bool", val = 1,   min = 0,    max = 1   },
@@ -153,10 +157,13 @@ local function triggerBankSound(bankNum, sliderNorm)
         CHIRP_CMD_PLAY_SOUND,
         bankNum,
         string.byte(effPage),
-        trackIdx
+        trackIdx,
+        telem.volume
     })
-    lastTrigBank = bankNum
-    lastTrigTime = getTime()
+    lastSentVolume  = telem.volume
+    lastVolPushTime = getTime()
+    lastTrigBank    = bankNum
+    lastTrigTime    = getTime()
 end
 
 local function triggerStopAudio()
@@ -293,8 +300,31 @@ local function pollTelemetryAndButtons()
 
     telem.current     = getValue('Curr') or telem.current
     telem.peakCurrent = getValue('Capa') or telem.peakCurrent
-    telem.volume      = math.floor(getValue('GSpd') or telem.volume)
     telem.linkQuality = getValue('TQly') or getValue('RQly') or 0
+
+    -- Read Master Volume directly from Dial S2 (0..99%) for instant 0ms UI response
+    -- and sync exact 0..99 UI volume to the droid via 0xA6 (bypassing CH8 mixer limits)
+    local s2Raw = getValue('s2')
+    if s2Raw ~= nil then
+        if s2Raw < -1024 then s2Raw = -1024 end
+        if s2Raw > 1024  then s2Raw = 1024  end
+        telem.volume = math.floor(((s2Raw + 1024) * 99) / 2048 + 0.5)
+        local now = getTime()
+        if telem.volume ~= lastSentVolume then
+            if telem.volume == 0 or telem.volume == 1 or telem.volume == 99 or (now - lastVolPushTime) >= 5 then
+                pushCrsfCommand({
+                    CRSF_ADDR_FC,
+                    CRSF_ADDR_HANDSET,
+                    CHIRP_CMD_SET_VOLUME,
+                    telem.volume
+                })
+                lastSentVolume  = telem.volume
+                lastVolPushTime = now
+            end
+        end
+    else
+        telem.volume = math.floor(getValue('GSpd') or telem.volume)
+    end
 
     -- 3. Parse Packed Robot Status in GPS Satellites (Sats)
     local rawSats = getValue('Sats')
@@ -349,42 +379,46 @@ local function pollTelemetryAndButtons()
     local sliderNorm = (s1Raw + 1024) / 2048.0
     if sliderNorm >= 1.0 then sliderNorm = 0.9999 end
 
-    -- 6. Poll Physical Momentary Buttons (SD=Bank1, SH=Bank2, SA=Bank3, SG=Bank4, SA+SD=Stop)
-    local sdNow = (getValue('sd') or -1024) > 200
-    local shNow = (getValue('sh') or -1024) > 200
-    local saNow = (getValue('sa') or -1024) > 200
-    local sgNow = (getValue('sg') or -1024) > 200
+    -- 6. Poll Physical Momentary Buttons:
+    --    EdgeTX Zorro switch mapping:
+    --      'sd' -> Bank 1 (Physical SD)
+    --      'sa' -> Bank 2 (Physical SH)
+    --      'sg' -> Bank 3 (Physical SA)
+    --      'sh' -> Bank 4 (Physical SG)
+    local b1Now = (getValue('sd') or -1024) > 200 -- Bank 1
+    local b2Now = (getValue('sa') or -1024) > 200 -- Bank 2
+    local b3Now = (getValue('sg') or -1024) > 200 -- Bank 3
+    local b4Now = (getValue('sh') or -1024) > 200 -- Bank 4
 
-    -- Check SA + SD simultaneous Stop-Audio combo
-    if saNow and sdNow then
+    -- Check simultaneous Stop-Audio combo (Bank 1 + Bank 2 or Bank 1 + Bank 3 pressed together)
+    if b1Now and (b2Now or b3Now) then
         if not btnState.comboActive then
             btnState.comboActive = true
             triggerStopAudio()
         end
-    elseif not saNow and not sdNow then
-        -- Cleanly trigger Bank 1 (SD) or Bank 3 (SA) on release if not part of a Stop combo
+    elseif not b1Now and not b2Now and not b3Now then
+        -- Cleanly trigger Bank 1, Bank 2, or Bank 3 on release if not part of a Stop combo
         if not btnState.comboActive then
             if btnState.sdPrev then
                 triggerBankSound(1, sliderNorm)
             elseif btnState.saPrev then
+                triggerBankSound(2, sliderNorm)
+            elseif btnState.sgPrev then
                 triggerBankSound(3, sliderNorm)
             end
         end
         btnState.comboActive = false
     end
 
-    -- Bank 2 (SH) and Bank 4 (SG) trigger immediately on rising press edge
-    if shNow and not btnState.shPrev then
-        triggerBankSound(2, sliderNorm)
-    end
-    if sgNow and not btnState.sgPrev then
+    -- Bank 4 triggers immediately on rising press edge
+    if b4Now and not btnState.shPrev then
         triggerBankSound(4, sliderNorm)
     end
 
-    btnState.sdPrev = sdNow
-    btnState.shPrev = shNow
-    btnState.saPrev = saNow
-    btnState.sgPrev = sgNow
+    btnState.sdPrev = b1Now
+    btnState.saPrev = b2Now
+    btnState.sgPrev = b3Now
+    btnState.shPrev = b4Now
 
     return sliderNorm
 end
@@ -411,9 +445,9 @@ end
 local function drawDashboard128x64(sliderNorm)
     local now = getTime()
 
-    -- Top Status Header (y = 0..6)
+    -- Top Status Header (y = 0..6): Always zero-pad volume to 2 digits (v00..v99)
     local spdStr = getSpeedLabel()
-    lcd.drawText(0, 0, spdStr .. " v" .. telem.volume .. " LQ" .. telem.linkQuality, SMLSIZE)
+    lcd.drawText(0, 0, string.format("%s v%02d LQ%d", spdStr, telem.volume, telem.linkQuality), SMLSIZE)
     lcd.drawText(128, 0, string.format("P:%.1fv", telem.batt1), SMLSIZE + RIGHT)
     lcd.drawLine(0, 7, 127, 7, SOLID, FORCE)
 

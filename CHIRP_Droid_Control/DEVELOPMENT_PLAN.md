@@ -211,35 +211,43 @@ graph TD
 
 ---
 
-### Phase 3: Audio Link, Telemetry & Fresh EdgeTX Lua Script *(Current / Next Up)*
-*Status: Ready for Implementation*
+### Phase 3: Audio Link, Telemetry & Fresh EdgeTX Lua Script *(Completed)*
+*Status: Verified on Hardware*
 
 - **Objectives**:
   - **CHIRP_Audio Serial Protocol**: Connect Hardware `UART2` (`Serial2` on `GPIO 1/2` @ 115200 baud) to the CHIRP_Audio Trigger. Implement manifest request (`GMAN`), sound name fetching (`GNME`), sound triggering (`PLAY`), and vocal feedback (`PVOICE`).
-  - **CRSF Telemetry Uplink & Bidirectional Commands**: Transmit battery telemetry (`ADC1` on `GP8, GP9, GP10`), drive/arming status, volume, and sound names back to the Radiomaster Zorro, and process incoming `0x32` sound triggers and config updates from the handset.
-  - **New EdgeTX Lua Script**: Develop a fresh, responsive Lua telemetry dashboard from scratch for the Radiomaster Zorro (128x64 B&W display):
-    - Live Sound Triggering Dashboard using `S1` scroll and **`SD / SH / SA / SG`** momentary buttons (Banks 1–4) sending direct CRSF `0x32` play commands.
-    - Droid Diagnostics & 3-Battery Monitor.
-    - Settings Editor for adjusting dome offset, motor inverts, and speeds from the transmitter.
+  - **CRSF Telemetry Uplink & Bidirectional Commands**: Transmit battery telemetry (`ADC1` on `GP8, GP9, GP10`), drive/arming status, volume, and sound names back to the Radiomaster Zorro, and process incoming `0x32` sound triggers, volume updates (`0xA6`), and config updates from the handset.
+  - **New EdgeTX Lua Script**: Develop a fresh, responsive Lua telemetry dashboard (`CHIRP.lua`) for the Radiomaster Zorro (128x64 B&W display):
+    - Live Sound Triggering Dashboard using `S1` scroll, roller page switching (`A` through `F`), and **`SD / SH / SA / SG`** momentary buttons (Banks 1–4) sending direct CRSF `0x32` play commands with instant stop combo (`SD + SA` or `SD + SH`).
+    - Droid Diagnostics & 3-Battery Monitor with cleaned display layout and autonomous behavior summary.
+    - Settings Editor with quick `[back to pg1]` navigation shortcuts, persistent NVS parameters (dome offset/invert, motor inverts, speed presets, max streams, min volume), and on-demand `Re-Sync Audio`.
+    - High-fidelity potentiometer master volume (`S2`) scaling smoothly from true mute (`v00` = 0) to configurable `Min Volume` (`v01`) through full volume (`v99`).
   - **Multi-Transmitter Architecture**: Lay the groundwork to support additional EdgeTX transmitter form factors down the line (e.g., Radiomaster TX16S color touchscreen 480x272, Boxer, Pocket).
 - **Bench Verification**:
-  1. Connect ESP32-S3 to CHIRP_Audio board; verify automatic sound manifest sync over UART2.
-  2. Turn sound selection knob `S1` on Zorro; confirm track name updates on the Lua screen.
-  3. Press `SD / SH / SA / SG` buttons; verify instant `0x32` command reception and audio playback.
+  1. Connected ESP32-S3 to CHIRP_Audio board; verified automatic sound manifest sync and vocal cues over UART2.
+  2. Turned sound selection knob `S1` and roller page selection on Zorro; confirmed track names and page letters update dynamically.
+  3. Pressed `SD / SH / SA / SG` buttons; verified instant `0x32` command reception and audio playback across Banks 1–4.
+  4. Tested master volume potentiometer `S2`; verified zero-padded `v00`–`v99` display, true silence at `v00`, and smooth minimum volume scaling up from `v01`.
+  5. Verified Page 3 parameter persistence in ESP32 NVS across reboots.
+
+---
+### Phase 4: Smart Droid Features
+
+- **Objectives**:
+  - **Autonomous Behaviors**: Non-blocking AutoDome (random dome turning routines) and AutoChirp (random ambient sound generation based on activity).
 
 ---
 
-### Phase 4: Wireless Expansion & Smart Droid Features
+### Phase 5: Wireless Expansion
 
 - **Objectives**:
   - **ESP-NOW Dome Bridge**: Upgrade communication with the RSeries Logic Engine (which is already an ESP32-WROVER) to communicate wirelessly over **ESP-NOW**, eliminating physical slip-ring serial wires entirely.
   - **WCB Compatibility**: Implement ESP-NOW listener/transmitter for Greg Hulette's Wireless Communication Board (WCB) standard.
   - **Phone Web Portal**: Self-hosted Wi-Fi Captive Portal / Web Dashboard running on Core 0. Allows configuring speeds, audio settings, and triggering routines directly from a smartphone or tablet.
-  - **Autonomous Behaviors**: Non-blocking AutoDome (random dome turning routines) and AutoChirp (random ambient sound generation based on activity).
 
 ---
 
-### Phase 5: Future Investigation — Digital Motor Controller Telemetry (Roboteq & VESC)
+### Phase 6: Future Investigation — Digital Motor Controller Telemetry (Roboteq & VESC)
 
 For initial phases, foot drive uses universal 50Hz RC PWM signals (`1000–2000µs`) on `GP6` (Left Foot) and `GP7` (Right Foot). As a future investigation, if digital communication with brushless motor controllers (**Roboteq SBL1360** or **VESC**) is desired, `GP6` and `GP7` can be dynamically reconfigured as a **CAN bus (`TWAI TX/RX`)** or **Serial (`UART TX/RX`)** pair to support:
 - **Roboteq (SBL1360)**: Querying battery current (`?A`), motor RPM (`?S`), and internal temperature (`?T`).

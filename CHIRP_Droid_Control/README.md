@@ -219,12 +219,13 @@ The active channel map aligns directly with the Radiomaster Zorro EdgeTX configu
 Rather than packing sound buttons into analog channel slices, the **CHIRP EdgeTX Lua Dashboard** communicates directly with the ESP32 using bidirectional CRSF Command Frames (`0x32`):
 
 - **Scroll Wheel `S1`**: Browses through tracks (1–24) in the active bank/page.
-- **Button `SD`**: Triggers Bank 1 sound.
-- **Button `SH`**: Triggers Bank 2 sound.
-- **Button `SA`**: Triggers Bank 3 sound.
-- **Button `SG`**: Triggers Bank 4 sound.
-- **Combo `SD + SA`**: Instantly halts all audio playback (`CHIRP_CMD_STOP_AUDIO`).
-- **Telemetry Backchannel**: Adjusting settings (such as motor inversion or speed limits) on Screen 3 transmits `0x32` packets back to the ESP32, which stores them into onboard NVS flash.
+- **Button `SD`**: Triggers Bank 1 sound (`sd`).
+- **Button `SH`**: Triggers Bank 2 sound (mapped via EdgeTX `sa`).
+- **Button `SA`**: Triggers Bank 3 sound (mapped via EdgeTX `sg`).
+- **Button `SG`**: Triggers Bank 4 sound (mapped via EdgeTX `sh`).
+- **Combo `SD + SA` or `SD + SH`**: Instantly halts all audio playback (`CHIRP_CMD_STOP_AUDIO`).
+- **Master Volume `S2`**: Potentiometer `S2` provides live 0–99% master volume with instant on-screen feedback (`v00`–`v99`). Volume updates are synchronized to the ESP32 via direct CRSF packet (`0xA6`) with hardware channel `CH8` serving as fallback. `v00` provides true mute (0), while `v01` scales up smoothly from the configurable `Min Volume` threshold.
+- **Telemetry Backchannel**: Adjusting settings (such as dome offset, motor inverts, speed presets, max streams, or min volume) on Screen 3 transmits `0x32` packets back to the ESP32, which stores them into onboard NVS flash.
 
 *(Note: For radios without Lua script support, the firmware also retains a universal fallback on **CH9** that converts pulse widths from 1050–2000 µs into any of the 288 sound coordinates).*
 
@@ -461,26 +462,28 @@ The Lua script also caches names to `/SCRIPTS/TELEMETRY/chirp_cache.txt` so the 
 
 ### Page 1 — Sound Dashboard (Default)
 
-Shows the currently selected sound for each of the 4 banks in a split-screen layout. The Sound Index knob position determines which sound is highlighted in each bank. Sound names update live as telemetry arrives.
+Shows the currently selected sound for each of the 4 banks in a split-screen quadrant layout. The top status bar displays drive speed mode, zero-padded master volume (`v00`–`v99`), link quality, and primary battery voltage. Rotating the handset roller cycles through available sound pages (`A`, `B`, `C`, and dynamically up to `D`–`F` if populated on the SD card). Dial `S1` selects the active track in each quadrant.
 
 ### Page 2 — Diagnostics
 
-Shows detailed system status:
-- All battery voltages (primary, secondary, tertiary)
-- Instantaneous and peak current draw
-- Speed mode, dome position angle
-- Autodome and Autochirp on/off status
-- Link quality
-- Placeholder for future WiFi integration
+Shows detailed real-time robot state without duplicate HUD clutter:
+- All 3 battery voltages (`B1`, `B2`, `B3`)
+- Instantaneous and peak system current draw (`Curr`, `Peak`)
+- Drive speed mode (`Spd`), dome heading (`Dome`)
+- Autonomous behaviors summary: `Auto [ dome:off|less|more chirp:off|on ]`
+- Configured Bank 1 sound page (`B1Pg`) and active sound page (`ActivePg`)
 
 ### Page 3 — Settings
 
 Allows the operator to view and modify system configuration variables directly from the transmitter:
-- Bank 1 Page selection
-- Dome motor parameters (Offset, Invert)
-- Voice Debug toggle
-- Foot drive motor inversion
-- Speed multipliers (Slow, Medium, Fast percentages)
+- `[back to pg1]` quick navigation shortcuts at the top and bottom of the list
+- Bank 1 Page selection (dynamically bounded by detected manifest pages)
+- Audio system parameters: Max Concurrent Streams (1–10), Min Volume threshold (0–50%)
+- Dome motor parameters: Offset (-127 to +127), Invert (ON/OFF)
+- Voice Debug audio feedback toggle (ON/OFF)
+- Foot drive motor inversion: Left Motor Invert, Right Motor Invert
+- Speed mode throttle limits: Slow (%), Medium (%), Fast (%)
+- `Re-Sync Audio`: Triggers non-blocking background manifest sync with CHIRP_Audio on demand
 
 #### Telemetry Backchannel
 
@@ -645,7 +648,7 @@ CHIRP_Droid_Control/
 │       ├── telemetry.cpp
 │       └── storage_manager.cpp
 ├── lua/
-│   ├── CHIRP2026.lua               # Active EdgeTX Telemetry & Direct CRSF 0x32 Lua Dashboard
+│   ├── CHIRP.lua                   # Active EdgeTX Telemetry & Direct CRSF 0x32 Lua Dashboard
 │   └── legacy/
 │       └── CHIRP2.lua              # Archived legacy Lua script
 ├── firmware-pico2/                 # Archived Raspberry Pi Pico 2 W prototype
