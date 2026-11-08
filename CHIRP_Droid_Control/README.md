@@ -3,7 +3,7 @@
 This is control firmware for an R2-D2 style mobile robot. It runs on an **Espressif ESP32-S3** (Waveshare ESP32-S3 Zero and ESP32-S3 DevKit) and is operated remotely via an EdgeTX transmitter over an **ExpressLRS** or **Crossfire** RC radio link (initially optimized for the **Radiomaster Zorro**, with future support for additional EdgeTX form factors like the TX16S, Boxer, and Pocket). A companion **Lua telemetry script** on the transmitter provides a live sound dashboard, settings editor, and diagnostics display.
 
 > [!NOTE]
-> **Active Architecture Notice**: The active firmware targets the **ESP32-S3**. See [DEVELOPMENT_PLAN.md](file:///c:/Users/Paul/Documents/GitHub/CHIRP/CHIRP_Droid_Control/DEVELOPMENT_PLAN.md) for the phased roadmap, pinouts, and architecture. The prior Raspberry Pi Pico 2 W prototype is archived in `firmware-pico2/`.
+> **Active Architecture Notice**: The firmware exclusively targets the **ESP32-S3**. See `DEVELOPMENT_PLAN.md` for the phased roadmap, pinouts, and dual-core architecture.
 
 This document describes the system architecture, data flows, and design rationale as implemented in the firmware.
 
@@ -258,7 +258,7 @@ SD Card/
 2. The knob value (988–2012 µs) is mapped to the sound count of that bank's current page
 3. Pressing a **trigger button** (Ch 8) enters a zone (1–4)
 4. **Releasing** the button triggers playback of the selected sound from that zone's bank
-5. The Pico sends `PLAY:soundIndex,bankIndex,pageChar,volume` to CHIRP_Audio over UART2
+5. The ESP32-S3 sends `PLAY:soundIndex,bankIndex,pageChar,volume` to CHIRP_Audio over UART2
 
 **Bank 1 exception**: Always uses Page A regardless of the page switch position (Bank 1 is configured directly on the CHIRP_Audio board).
 
@@ -272,7 +272,7 @@ The biggest improvement over the original CHIRP_Core — manifest sync is now **
 
 ```mermaid
 sequenceDiagram
-    participant P as Pico (CHIRP)
+    participant P as ESP32-S3 (CHIRP)
     participant A as CHIRP_Audio
 
     Note over P: Boot
@@ -325,7 +325,7 @@ AudioManifest manifest;
 
 ## Telemetry System
 
-The Pico sends telemetry data upstream through the CRSF link to the EdgeTX transmitter. Because CRSF has limited bandwidth and specific frame types, CHIRP uses a **round-robin scheduler** and creative data packing to transmit everything the Lua dashboard needs.
+The ESP32-S3 sends telemetry data upstream through the CRSF link to the EdgeTX transmitter. Because CRSF has limited bandwidth and specific frame types, CHIRP uses a **round-robin scheduler** and creative data packing to transmit everything the Lua dashboard needs.
 
 ### Round-Robin Schedule
 
@@ -651,7 +651,6 @@ CHIRP_Droid_Control/
 │   ├── CHIRP.lua                   # Active EdgeTX Telemetry & Direct CRSF 0x32 Lua Dashboard
 │   └── legacy/
 │       └── CHIRP2.lua              # Archived legacy Lua script
-├── firmware-pico2/                 # Archived Raspberry Pi Pico 2 W prototype
 ├── model09.yml                     # Reference EdgeTX model configuration (Radiomaster Zorro)
 ├── DEVELOPMENT_PLAN.md             # Comprehensive roadmap, architecture & verification log
 └── README.md                       # This document

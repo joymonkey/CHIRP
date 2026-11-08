@@ -262,7 +262,6 @@ For initial phases, foot drive uses universal 50Hz RC PWM signals (`1000–2000�
 CHIRP_Droid_Control/
 ├── DEVELOPMENT_PLAN.md      <-- This document
 ├── README.md                <-- Project overview
-├── firmware-pico2/          <-- Archived Raspberry Pi Pico 2 W implementation
 ├── lua/
 │   ├── CHIRP.lua            <-- Active EdgeTX Telemetry & Direct CRSF 0x32 Lua Dashboard
 │   └── legacy/
