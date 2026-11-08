@@ -14,7 +14,7 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20261012"
+#define VERSION_STRING "20261108"
 // #define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
