@@ -17,12 +17,12 @@ Primary use case is an Astromech droid sound system. See `../../README.md` for u
 
 ## 2. Build environment
 
-- **Toolchain:** PlatformIO (`platformio.ini` in this folder, `src_dir = .` — every `.cpp` here is compiled).
+- **Toolchain:** PlatformIO (`platformio.ini` in `CHIRP_Audio_Trigger/`, `src_dir = src` — every `.cpp` in `src/` is compiled).
   - Platform: `maxgerhardt/platform-raspberrypi`, board `rpipico2`, **Earle Philhower arduino-pico core pinned to 5.4.4**.
   - CPU 250 MHz, `-Ofast`, `USE_TINYUSB`, 16 MB flash with **14 MB LittleFS**, **8 MB PSRAM** (CS = GPIO 0).
   - Libraries: `arduino-libhelix` v0.9.2 (MP3/AAC decoders), `CRC32`, `Adafruit NeoPixel`. SdFat, LittleFS, I2S, TinyUSB come from the core.
 - Arduino IDE equivalents are referenced in log messages ("2MB Sketch, 14MB FS", "Fast (-Ofast)"). Keep `platformio.ini` and those settings consistent.
-- Build check: `pio run` from this folder. There are **no automated tests**; the only validation available to agents is a successful compile. Behavioral changes must be tested on hardware by the user — say so when relevant.
+- Build check: `pio run` from `CHIRP_Audio_Trigger/`. There are **no automated tests**; the only validation available to agents is a successful compile. Behavioral changes must be tested on hardware by the user — say so when relevant.
 - Do not change pinned versions (core, libhelix) without being asked; audio timing is sensitive to them.
 
 ## 3. File map
