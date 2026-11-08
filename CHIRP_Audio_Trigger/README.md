@@ -50,6 +50,13 @@ Because CHIRP is polyphonic, triggering multiple sounds in fast succession can c
   - `#DOUBLE_TAP_TIMEOUT 600` : Window in milliseconds to detect a double-tap (default 600 ms; set to `0` to disable).
   - `#DOUBLE_TAP_MATCH 0` : Mode selection. `0` (default) allows any two play commands in fast succession to trigger silence (recommended for control systems that randomize tracks). `1` requires double-tapping the exact same sound trigger to silence.
 
+# WCB Discovery
+If the serial control interface is connected to a [Wireless Communication Board](https://github.com/greghulette/Wireless_Communication_Board-WCB) (WCB 6.2 or later), the CHIRP Audio Trigger can introduce itself to the WCB. Add this line to CHIRP.INI and restart the board:
+
+    #WDP_ANNOUNCE 1
+
+Every 25-30 seconds the board then sends one line, `@WDP1 {"type":"CHIRP Audio Trigger","fw":"<version>",...}`, which the WCB uses to list the board on that port (`?WDP,DA` on the WCB). It is off by default because the line is sent without being asked for; leave it off if the port is connected to anything other than a WCB.
+
 # Configuration via CHIRP.INI
 The `CHIRP.INI` file is stored in the root directory of the SD card and allows customizing the firmware's audio engine, communication interfaces, and playback behavior without needing to recompile code. If `CHIRP.INI` is not present, the firmware will automatically generate one using default values upon boot.
 
@@ -64,6 +71,7 @@ Lines in `CHIRP.INI` begin with `#KEY <value>`. The following options are suppor
 | `#LEGACY_MONOPHONIC` | `0` or `1` | `0` | Controls playback behavior for legacy SparkFun/Robertsonics MP3 Trigger serial commands (`t`, `T`, `p`, etc.). `0` = Polyphonic (sounds mix across streams). `1` = Monophonic (new sound stops existing playback, mimicking original single-stream MP3 Trigger hardware). |
 | `#DOUBLE_TAP_TIMEOUT` | Milliseconds (`0`–`5000`) | `600` | Window in milliseconds to detect a double-tap gesture to stop all audio streams. Set to `0` to disable double-tap silencing entirely. *(Convenience alias: `#DOUBLE_TAP_ENABLE 0`)* |
 | `#DOUBLE_TAP_MATCH` | `0` or `1` | `0` | Double-tap matching mode. `0` = Mode A (any two play commands in fast succession stop playback; ideal for transmitters that randomize vocal tracks). `1` = Mode B (only identical sound triggers stop playback). |
+| `#WDP_ANNOUNCE` | `0` or `1` | `0` | Periodic WDP device announce packet sent over `Serial2` every 25–30s for automatic discovery by Wireless Communication Boards (WCB 6.2+). Off by default. |
 | `#VERSION` | Date string (e.g. `20261012`) | Auto-managed | Tracks the firmware version that last booted with the card. If updated firmware is detected, CHIRP speaks a voice notification on boot. Do not edit manually unless forcing voice feedback. |
 
 # SD Card Structure

@@ -150,6 +150,15 @@ bool parseIniFile() {
                         }
                     }
                 }
+                // Check WDP_ANNOUNCE
+                else if (strncasecmp(command, "WDP_ANNOUNCE", 12) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' '); // Find first char of value
+                        int val = atoi(value);
+                        wdpAnnounce = (val == 1);
+                    }
+                }
             }
         }
         iniFile.close();
@@ -225,6 +234,7 @@ void writeIniFile() {
         iniFile.printf("#LEGACY_MONOPHONIC %d\n", legacyMonophonic ? 1 : 0);
         iniFile.printf("#DOUBLE_TAP_TIMEOUT %u\n", doubleTapTimeoutMs);
         iniFile.printf("#DOUBLE_TAP_MATCH %d\n", doubleTapMatchOnly ? 1 : 0);
+        iniFile.printf("#WDP_ANNOUNCE %d\n", wdpAnnounce ? 1 : 0);
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
         iniFile.println("# Do not edit this manually unless you want to force voice feedback.");

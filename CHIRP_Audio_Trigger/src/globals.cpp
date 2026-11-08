@@ -48,6 +48,9 @@ bool legacyMonophonic = false;
 uint16_t doubleTapTimeoutMs = DEFAULT_DOUBLE_TAP_TIMEOUT_MS;
 bool doubleTapMatchOnly = false; // <-- Change to false for Mode A (any play command in quick succession triggers a stop) or true for Mode B (only identical play commands in quick succession trigger a stop)
 
+// WCB discovery (WDP device announce), off unless CHIRP.INI sets #WDP_ANNOUNCE 1
+bool wdpAnnounce = false;
+
 // ===================================
 // Global Mutex Definitions
 // ===================================

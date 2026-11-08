@@ -173,6 +173,7 @@ extern Adafruit_USBD_MSC *usb_msc;
 
 // Legacy Compatibility
 extern bool legacyMonophonic;
+extern bool wdpAnnounce;
 
 // Double-Tap Silence Configuration
 #define DEFAULT_DOUBLE_TAP_TIMEOUT_MS 600
@@ -438,6 +439,9 @@ bool queueSerial2Message(const char *msg);
 void trySendQueuedMessages(int maxMessages);
 bool isCpuBusy();
 int getQueuedMessageCount();
+
+// from wdp_announce.cpp
+void wdpAnnounceTick();
 
 // from blinkies.cpp
 void initBlinkies();
