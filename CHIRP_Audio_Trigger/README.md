@@ -1,11 +1,22 @@
 # CHIRP Audio Trigger
 The CHIRP Audio Trigger is a sound file player similar to the trusty Sparkfun/Robertsonics MP3 Trigger board. Functionality is focused on using the CHIRP Audio Trigger as the sound system for an Astromech droid, but it is also very usable as a general sound player for other projects, and is a fun platform to experiment with audio playback and processing programming. The stock firmware can read the contents of the SD card and provide a droids primary microcontroller with a manifest of sounds - allowing sound names to be sent to the operators radio transmitter and displayed as telemetry on the transmitters GUI.
 
-# Initial Audio Trigger Features
-- decode, play and mix multiple audio filetypes (MP3 and uncompressed WAV, stereo or mono, 44.1kHz or 22.05kHz sample rates)
-- easy to implement in current droid control systems (Padawan/Shadow/Kyber)
-- room on the hardware for advanced droid nonsense
-- affordable PCB with minimal easy to source components
+<p align="center">
+  <img src="docs/chirp-board-revb.png" alt="CHIRP Audio Trigger Board Rev B" width="50%" />
+</p>    
+
+# Features
+- **Multi-Stream Audio Mixing:** Decode, play, and mix multiple simultaneous audio streams (MP3, AAC/M4A, and uncompressed WAV; stereo or mono, 44.1 kHz or 22.05 kHz sample rates) directly to an I2S DAC.
+- **Embedded System Voice & Audio Feedback:** Onboard spoken cues and feedback clips embedded directly in firmware flash for system status announcements (baud rate, sound banks, firmware updates, SD status) or triggered on demand via serial (`PVOICE`).
+- **RP2350 + PSRAM Architecture:** Powered by the Raspberry Pi RP2350 microcontroller and 8 MB of high-speed external PSRAM for deep ring buffering, eliminating playback latency and SD card read stalls.
+- **Drop-in Compatibility:** Supports legacy SparkFun/Robertsonics MP3 Trigger serial commands alongside CHIRP's high-level extended command set for seamless integration into existing droid systems (Padawan, Shadow, Kyber).
+- **Dynamic Sound Manifest & Telemetry:** Scans SD card sound banks on boot to provide the droid's primary microcontroller with track manifests and names for real-time telemetry display on radio transmitters.
+- **Variant Randomization:** Automatic non-repeating random selection across variant audio files (e.g. `chat_01.wav`, `chat_02.wav` triggered under a common `CHAT` name).
+- **USB Mass Storage Class (MSC):** Access and manage the SD card directly over USB without removing the card (toggled via serial command or GPIO 7).
+- **Double-Tap Silencing:** Fast double-tap gesture to immediately stop all active streams from any transmitter trigger.
+- **WCB Auto-Discovery:** Automatic periodic device announcements for plug-and-play integration with Wireless Communication Boards (WCB 6.2+).
+- **Configurable via `CHIRP.INI`:** Comprehensive runtime configuration for stream counts, buffer sizes, baud rates, and double-tap modes without recompiling.
+- **Status Blinkies:** WS2812 RGB LED status indication for system states, audio streaming, and error notifications.
 
 # Serial Commands
 Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Trigger, so this board can be used as a drop-in replacement, alongside CHIRP's high-level command set.
@@ -26,6 +37,7 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `STOP` / `STOP:<stream>` (stop all streams or specified stream)
 - `VOL:<vol>` / `VOL:<stream>,<vol>` (set global volume or individual stream volume, 0–99)
 - `STAT:<stream>` (get the current status of a specified stream)
+- `PVOICE:<filename>` (play an embedded system voice clip, e.g. `PVOICE:firmware`)
 - `GMAN` (Get Manifest of how many sounds are in each page of each Sound Bank)
 - `LIST` (List sounds stored in Sound Bank 1 as well as sound counts in Sound Banks 2-6) 
 - `GNME:bank,page,index` (Get the name of a particular sound in a Sound Bank)
@@ -35,6 +47,17 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `BPAGE:<page>` (change the default page for Bank 1 - requires reboot after changing)
 - `STRM:<count>` (set the maximum number of simultaneous audio streams, 1–10; takes effect immediately and persists to CHIRP.INI)
 - `MUSB` / `MUSB:1` / `MUSB:0` (enable/disable Mass Storage Class for USB - to access the SD card over USB)
+
+# Embedded System Sounds and Voice Feedback (`PVOICE`)
+In addition to playing audio files stored on the SD card, the CHIRP Audio Trigger firmware includes a built-in library of spoken voice feedback and system audio clips compiled directly into flash memory. This allows the board to provide audible diagnostic and status feedback—such as firmware version notifications, baud rate changes, sound bank/page selections, USB mode toggles, and SD card warnings—even if an SD card is not inserted or cannot be read.
+
+These sounds can also be triggered directly over serial at any time using the `PVOICE:<filename>` command (for example, `PVOICE:firmware`, `PVOICE:battery`, or `PVOICE:connected`).
+
+### Generating and Embedding System Sounds
+- **Audio Format:** System sounds are low bitrate mono MP3 files (encoded at 16 kbps, 22.05 kHz sample rate, single channel). This format minimizes flash memory footprint while keeping spoken voice prompts clear and intelligible.
+- **Embedded in Code:** The compiled audio clips are stored as hex byte arrays embedded directly in `src/system_audio_data.cpp`.
+- **File Listing:** Developers can inspect `src/system_audio_data.h` for a complete listing of all available embedded sound files and declarations.
+- **Conversion Tool:** New voice clips can be added by placing `.mp3` files in the `Sounds/0_system` directory and running the `Sounds/convert_system_audio.py` script, which automatically updates `system_audio_data.cpp` and `system_audio_data.h`.
 
 # Button Actions
 The Prev, Play/Stop and Next buttons act similarly to the navigation buttons of the MP3 Trigger, playing files that are stored in the root of the SD card. They also have additional configuration functions that can be useful for setting up your droid without needed to send specific serial commands or edit the CHIRP.INI file.
