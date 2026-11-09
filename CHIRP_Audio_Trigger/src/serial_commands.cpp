@@ -380,13 +380,18 @@ void handleBpage(Stream &serial, char* args) {
     if (page >= 'a' && page <= 'z') page -= 32;
     
     if (page >= 'A' && page <= 'Z') {
-        activeBank1Page = page;
-        writeIniFile();
-        sendSerialResponse(serial, "PACK:BPAGE");
-        sendSerialResponseF(serial, "BPAGE:%c", activeBank1Page);
-        serial.println("Note: Reboot required to reload Bank 1.");
-        
-        playPageFeedback(activeBank1Page);
+        if (page != activeBank1Page) {
+            activeBank1Page = page;
+            writeIniFile();
+            sendSerialResponse(serial, "PACK:BPAGE");
+            sendSerialResponseF(serial, "BPAGE:%c", activeBank1Page);
+            serial.println("Note: Reboot required to reload Bank 1.");
+            
+            playPageFeedback(activeBank1Page);
+        } else {
+            sendSerialResponse(serial, "PACK:BPAGE");
+            sendSerialResponseF(serial, "BPAGE:%c", activeBank1Page);
+        }
     } else {
         serial.println("ERR:PARAM - Invalid page (A-Z)");
     }

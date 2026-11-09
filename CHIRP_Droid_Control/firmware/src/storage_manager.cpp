@@ -65,8 +65,12 @@ void storageManagerUpdateSetting(uint8_t paramId, int16_t rawVal) {
     switch (paramId) {
         case 1: {
             char page = (rawVal >= 'A' && rawVal <= AUDIO_MAX_PAGE_CHAR) ? (char)rawVal : 'A';
-            g_robotConfig.bank1Page = page;
-            audioSetBank1Page(page);
+            if (page != g_robotConfig.bank1Page) {
+                g_robotConfig.bank1Page = page;
+                audioSetBank1Page(page);
+            } else {
+                changed = false;
+            }
             break;
         }
         case 2:

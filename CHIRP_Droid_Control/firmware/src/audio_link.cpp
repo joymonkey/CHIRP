@@ -152,6 +152,9 @@ static void parseAudioLine(char* line) {
 
         int pIdx = pageChar - 'A';
         if (bankNum >= 1 && bankNum <= AUDIO_MAX_BANKS && pIdx >= 0 && pIdx < AUDIO_MAX_PAGES) {
+            if (bankNum == 1) {
+                g_robotConfig.bank1Page = pageChar;
+            }
             uint8_t clampedCount = (uint8_t)constrain(count, 0, (int)AUDIO_MAX_SOUNDS);
             g_audioManifest.banks[bankNum - 1].pages[pIdx].soundCount = clampedCount;
 
@@ -237,8 +240,7 @@ void audioLinkInit() {
                   PIN_AUDIO_RX, PIN_AUDIO_TX, (unsigned long)AUDIO_BAUD_RATE);
     Serial.flush();
 
-    // Send initial Bank 1 Page and Max Streams config, then request sound manifest
-    audioSetBank1Page(g_robotConfig.bank1Page);
+    // Send initial Max Streams config, then request sound manifest
     audioSetMaxStreams(g_robotConfig.maxAudioStreams);
     audioRequestManifestSync();
 
