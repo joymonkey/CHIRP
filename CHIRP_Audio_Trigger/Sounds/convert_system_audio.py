@@ -56,6 +56,8 @@ def convert_audio_files(force_reencode=False):
                         '-b:a', '16k',
                         '-ac', '1',
                         '-ar', '22050',
+                        '-id3v2_version', '0',
+                        '-write_id3v1', '0',
                         mp3_path
                     ]
                     res = subprocess.run(cmd)
