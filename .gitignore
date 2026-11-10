@@ -1,0 +1,59 @@
+# Backup and temporary files
+*.bak
+*.backup
+*.temp
+*.tmp
+*~
+*.swp
+# Ignore .gitignore itself
+.gitignore
+
+# OS generated files
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+
+# IDE and Editor configurations
+.vscode/
+.idea/
+.pio/
+*.sublime-workspace
+*.sublime-project
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Hardware / EDA CAD auto-saves and backups (KiCad, Eagle, etc.)
+*-backups/
+*.kicad_prl
+*.lck
+~*
+*.kicad_pcb-bak
+*.sch-bak
+*-bak
+*.bck
+_autosave-*
+*.orig
+*.stp
+
+#old versions
+*/firmware-pico2/*    
+CHIRP2.lua
+model*.yml

@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+
+  (lib (name "CHIRP_DC_ESP32S3_DevkitBreakout") (type "KiCad") (uri "${KIPRJMOD}/CHIRP_DC_ESP32S3_DevkitBreakout.pretty") (options "") (descr "")))

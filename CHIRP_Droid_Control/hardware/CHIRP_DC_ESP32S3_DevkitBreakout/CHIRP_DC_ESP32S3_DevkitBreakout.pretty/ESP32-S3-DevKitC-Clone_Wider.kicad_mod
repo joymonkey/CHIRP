@@ -1,0 +1,106 @@
+(footprint "ESP32-S3-DevKitC-Clone_Wider"
+  (version 20240108)
+  (generator "copperpour")
+  (layer "F.Cu")
+  (descr "ESP32-S3 DevKit Clone / YD-ESP32-S3 footprint (Wider 1.1 inch / 27.94mm row pitch, 2x22 pins)")
+  (attr through_hole)
+  (pad "1" thru_hole rect (at -13.97 -26.67) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "2" thru_hole circle (at -13.97 -24.13) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "3" thru_hole circle (at -13.97 -21.59) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "4" thru_hole circle (at -13.97 -19.05) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "5" thru_hole circle (at -13.97 -16.51) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "6" thru_hole circle (at -13.97 -13.97) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "7" thru_hole circle (at -13.97 -11.43) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "8" thru_hole circle (at -13.97 -8.89) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "9" thru_hole circle (at -13.97 -6.35) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "10" thru_hole circle (at -13.97 -3.81) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "11" thru_hole circle (at -13.97 -1.27) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "12" thru_hole circle (at -13.97 1.27) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "13" thru_hole circle (at -13.97 3.81) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "14" thru_hole circle (at -13.97 6.35) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "15" thru_hole circle (at -13.97 8.89) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "16" thru_hole circle (at -13.97 11.43) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "17" thru_hole circle (at -13.97 13.97) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "18" thru_hole circle (at -13.97 16.51) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "19" thru_hole circle (at -13.97 19.05) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "20" thru_hole circle (at -13.97 21.59) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "21" thru_hole circle (at -13.97 24.13) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "22" thru_hole circle (at -13.97 26.67) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "23" thru_hole rect (at 13.97 -26.67) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "24" thru_hole circle (at 13.97 -24.13) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "25" thru_hole circle (at 13.97 -21.59) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "26" thru_hole circle (at 13.97 -19.05) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "27" thru_hole circle (at 13.97 -16.51) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "28" thru_hole circle (at 13.97 -13.97) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "29" thru_hole circle (at 13.97 -11.43) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "30" thru_hole circle (at 13.97 -8.89) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "31" thru_hole circle (at 13.97 -6.35) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "32" thru_hole circle (at 13.97 -3.81) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "33" thru_hole circle (at 13.97 -1.27) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "34" thru_hole circle (at 13.97 1.27) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "35" thru_hole circle (at 13.97 3.81) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "36" thru_hole circle (at 13.97 6.35) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "37" thru_hole circle (at 13.97 8.89) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "38" thru_hole circle (at 13.97 11.43) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "39" thru_hole circle (at 13.97 13.97) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "40" thru_hole circle (at 13.97 16.51) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "41" thru_hole circle (at 13.97 19.05) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "42" thru_hole circle (at 13.97 21.59) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "43" thru_hole circle (at 13.97 24.13) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+  (pad "44" thru_hole circle (at 13.97 26.67) (size 1.75 1.75) (layers "*.Cu" "*.Mask") (drill 1) )
+
+  ; Courtyard
+  (fp_rect (start -16.0 -35.0) (end 16.0 33.5) (stroke (width 0.05) (type solid)) (fill none) (layer "F.CrtYd"))
+
+  ; Fab outline: Module PCB extents
+  (fp_rect (start -15.24 -34.0) (end 15.24 31.5) (stroke (width 0.1) (type solid)) (fill none) (layer "F.Fab"))
+
+  ; Silkscreen: Module PCB outline
+  (fp_line (start -15.24 -34.0) (end 15.24 -34.0) (stroke (width 0.15) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -15.24 31.5) (end 15.24 31.5) (stroke (width 0.15) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -15.24 -34.0) (end -15.24 31.5) (stroke (width 0.15) (type solid)) (layer "F.SilkS"))
+  (fp_line (start 15.24 -34.0) (end 15.24 31.5) (stroke (width 0.15) (type solid)) (layer "F.SilkS"))
+
+  ; Silkscreen & Fab: Pin header socket outlines
+  (fp_rect (start -15.24 -28.0) (end -12.70 28.0) (stroke (width 0.12) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_rect (start 12.70 -28.0) (end 15.24 28.0) (stroke (width 0.12) (type solid)) (fill none) (layer "F.SilkS"))
+
+  ; Pin 1 indicator (marker dot and text)
+  (fp_circle (center -16.2 -26.67) (end -15.7 -26.67) (stroke (width 0.12) (type solid)) (fill solid) (layer "F.SilkS"))
+  (fp_text user "1" (at -11.5 -26.67 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text user "22" (at -11.3 26.67 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text user "23" (at 11.3 -26.67 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+  (fp_text user "44" (at 11.3 26.67 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+
+  ; =========================================================================
+  ; TOP: ESP32-S3 Module & PCB Antenna Overhang Area
+  ; =========================================================================
+  ; Module shield can outline
+  (fp_rect (start -9.0 -27.0) (end 9.0 -11.0) (stroke (width 0.12) (type dash)) (fill none) (layer "F.SilkS"))
+  (fp_text user "ESP32-S3" (at 0.0 -19.0 0) (layer "F.SilkS") (effects (font (size 1.0 1.0) (thickness 0.15))))
+
+  ; Antenna keepout / overhang area
+  (fp_rect (start -9.0 -34.0) (end 9.0 -27.0) (stroke (width 0.15) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_line (start -9.0 -34.0) (end 9.0 -27.0) (stroke (width 0.1) (type solid)) (layer "F.SilkS"))
+  (fp_line (start -9.0 -27.0) (end 9.0 -34.0) (stroke (width 0.1) (type solid)) (layer "F.SilkS"))
+  (fp_text user "▲ ANTENNA" (at 0.0 -30.5 0) (layer "F.SilkS") (effects (font (size 0.9 0.9) (thickness 0.15))))
+  (fp_text user "ANTENNA OVERHANG" (at 0.0 -36.0 0) (layer "F.Fab") (effects (font (size 0.9 0.9) (thickness 0.15))))
+
+  ; =========================================================================
+  ; BOTTOM: Dual USB-C Connectors (COM / UART & USB / OTG)
+  ; =========================================================================
+  ; Left USB-C connector (COM / UART)
+  (fp_rect (start -10.0 25.5) (end -1.0 32.5) (stroke (width 0.15) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_text user "COM" (at -5.5 28.5 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+
+  ; Right USB-C connector (USB / OTG)
+  (fp_rect (start 1.0 25.5) (end 10.0 32.5) (stroke (width 0.15) (type solid)) (fill none) (layer "F.SilkS"))
+  (fp_text user "USB" (at 5.5 28.5 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.12))))
+
+  ; Direction indicator for USB
+  (fp_text user "▼ USB-C" (at 0.0 24.0 0) (layer "F.SilkS") (effects (font (size 0.9 0.9) (thickness 0.15))))
+
+  ; Reference and Value
+  (fp_text reference "REF**" (at 0.0 0.0 0) (layer "F.SilkS") (effects (font (size 1.2 1.2) (thickness 0.15))))
+  (fp_text value "ESP32-S3-DevKitC-Clone_Wider" (at 0.0 4.0 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
+)
