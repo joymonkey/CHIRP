@@ -7,7 +7,7 @@ The CHIRP Audio Trigger is a sound file player similar to the trusty Sparkfun/Ro
 
 # Features
 - **Multi-Stream Audio Mixing:** Decode, play, and mix multiple simultaneous audio streams (MP3, AAC/M4A, and uncompressed WAV; stereo or mono, 44.1 kHz or 22.05 kHz sample rates) directly to an I2S DAC.
-- **Embedded System Voice & Audio Feedback:** Onboard spoken cues and feedback clips embedded directly in firmware flash for system status announcements (baud rate, sound banks, firmware updates, SD status) or triggered on demand via serial (`PVOICE`).
+- **Synthesized Droid Voice & Audio Feedback:** Built-in offline CMU Flite text-to-speech synthesizer with a configurable real-time Droid DSP pipeline (`K2SO` security droid, `B1` battle droid, `DROID`, `CUSTOM`) plus optional legacy embedded MP3 voice clips (`MP3` mode), triggered internally or via serial (`PVOICE`).
 - **RP2350 + PSRAM Architecture:** Powered by the Raspberry Pi RP2350 microcontroller and 8 MB of high-speed external PSRAM for deep ring buffering, eliminating playback latency and SD card read stalls.
 - **Drop-in Compatibility:** Supports legacy SparkFun/Robertsonics MP3 Trigger serial commands alongside CHIRP's high-level extended command set for seamless integration into existing droid systems (Padawan, Shadow, Kyber).
 - **Dynamic Sound Manifest & Telemetry:** Scans SD card sound banks on boot to provide the droid's primary microcontroller with track manifests and names for real-time telemetry display on radio transmitters.
@@ -37,7 +37,9 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `STOP` / `STOP:<stream>` (stop all streams or specified stream)
 - `VOL:<vol>` / `VOL:<stream>,<vol>` (set global volume or individual stream volume, 0–99)
 - `STAT:<stream>` (get the current status of a specified stream)
-- `PVOICE:<filename>` (play an embedded system voice clip, e.g. `PVOICE:firmware`)
+- `PVOICE:<token_or_phrase>` (speak a system voice token like `PVOICE:firmware` or any arbitrary phrase like `PVOICE:roger roger`)
+- `VMODE` / `VMODE:<mode>` (query or switch the voice pipeline: `K2SO`, `B1`, `DROID`, `CUSTOM`, or `MP3`; persists to `CHIRP.INI`)
+- `VCFG` / `VCFG:<key>=<val>` (inspect or live-tune the `CUSTOM` voice DSP pipeline; supports `COPY=<preset>`, `SAVE`, and `RESET`)
 - `GMAN` (Get Manifest of how many sounds are in each page of each Sound Bank)
 - `LIST` (List sounds stored in Sound Bank 1 as well as sound counts in Sound Banks 2-6) 
 - `GNME:bank,page,index` (Get the name of a particular sound in a Sound Bank)
@@ -48,16 +50,24 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `STRM:<count>` (set the maximum number of simultaneous audio streams, 1–10; takes effect immediately and persists to CHIRP.INI)
 - `MUSB` / `MUSB:1` / `MUSB:0` (enable/disable Mass Storage Class for USB - to access the SD card over USB)
 
-# Embedded System Sounds and Voice Feedback (`PVOICE`)
-In addition to playing audio files stored on the SD card, the CHIRP Audio Trigger firmware includes a built-in library of spoken voice feedback and system audio clips compiled directly into flash memory. This allows the board to provide audible diagnostic and status feedback—such as firmware version notifications, baud rate changes, sound bank/page selections, USB mode toggles, and SD card warnings—even if an SD card is not inserted or cannot be read.
+# Voice Synthesizer & Embedded System Sounds (`PVOICE`)
+CHIRP Audio Trigger supports both real-time **offline voice synthesis** (default) and legacy pre-recorded MP3 clips (`MP3` mode) for system status announcements (firmware updates, baud rate changes, sound bank/page selections, USB mode toggles, and SD card warnings) as well as arbitrary on-demand speech via `PVOICE:<phrase>` (for example, `PVOICE:firmware`, `PVOICE:battery`, or `PVOICE:roger roger`).
 
-These sounds can also be triggered directly over serial at any time using the `PVOICE:<filename>` command (for example, `PVOICE:firmware`, `PVOICE:battery`, or `PVOICE:connected`).
+### Built-In Voice Pipelines (`VMODE`)
+The synthesizer pairs **CMU Flite** (`cmu_us_kal`) with a real-time 44.1 kHz **Droid DSP Pipeline** (prosody & formant scaling, pitch wobble LFO, 3-band biquad EQ, ring modulator, metallic chassis comb resonator, and vocoder grit/bitcrusher):
+- **`K2SO`** *(Default)*: Deep, deadpan Imperial security droid with a hollow cranial comb resonance and subtle high-frequency metallic sheen.
+- **`B1`**: High-pitched, nasal Separatist battle droid with comlink bandpass filtering, 78 Hz ring-modulated rattle, and lo-fi vocoder grit.
+- **`DROID`**: Clean, balanced synthetic droid voice.
+- **`CUSTOM`**: User-tunable pipeline configurable live over serial (`VCFG`) or persisted in `CHIRP.INI` (`#VOICE_CUSTOM`).
+- **`MP3`**: Plays the legacy embedded 16 kbps mono MP3 clips compiled into `src/system_audio_data.cpp` (automatically falling back to synthesized speech for arbitrary phrases not in the embedded clip list).
 
-### Generating and Embedding System Sounds
-- **Audio Format:** System sounds are low bitrate mono MP3 files (encoded at 16 kbps, 22.05 kHz sample rate, single channel). This format minimizes flash memory footprint while keeping spoken voice prompts clear and intelligible.
-- **Embedded in Code:** The compiled audio clips are stored as hex byte arrays embedded directly in `src/system_audio_data.cpp`.
-- **File Listing:** Developers can inspect `src/system_audio_data.h` for a complete listing of all available embedded sound files and declarations.
-- **Conversion Tool:** New voice clips can be added by placing `.mp3` files in the `Sounds/0_system` directory and running the `Sounds/convert_system_audio.py` script, which automatically updates `system_audio_data.cpp` and `system_audio_data.h`.
+### Tuning or Defining New Voice Pipelines
+- **At Runtime (No Recompile):** Start from an existing preset with `VCFG:COPY=B1`, adjust parameters such as `VCFG:pitch=185,rmHz=85,rmMix=0.35,combMs=3.0,bits=10`, test with `PVOICE:roger roger`, and save to `CHIRP.INI` with `VCFG:SAVE`.
+- **In Firmware Source:** Append a new `VoicePipeline` struct entry to `kBuiltInVoicePipelines[]` in `src/voice_synth.cpp` (documented in `src/voice_synth.h`).
+
+### Generating Legacy Embedded MP3 Clips (`MP3` Mode)
+- **Audio Format:** System MP3 clips are low bitrate mono MP3 files (16 kbps, 22.05 kHz, single channel) stored as hex arrays in `src/system_audio_data.cpp` (declared in `src/system_audio_data.h`).
+- **Conversion Tool:** New MP3 clips can be compiled into firmware by placing `.wav` or `.mp3` files in `Sounds/0_system_wav` / `Sounds/0_system_mp3` and running `python Sounds/convert_system_audio.py`.
 
 # Button Actions
 The Prev, Play/Stop and Next buttons act similarly to the navigation buttons of the MP3 Trigger, playing files that are stored in the root of the SD card. They also have additional configuration functions that can be useful for setting up your droid without needed to send specific serial commands or edit the CHIRP.INI file.
@@ -95,6 +105,8 @@ Lines in `CHIRP.INI` begin with `#KEY <value>`. The following options are suppor
 | `#DOUBLE_TAP_TIMEOUT` | Milliseconds (`0`–`5000`) | `600` | Window in milliseconds to detect a double-tap gesture to stop all audio streams. Set to `0` to disable double-tap silencing entirely. *(Convenience alias: `#DOUBLE_TAP_ENABLE 0`)* |
 | `#DOUBLE_TAP_MATCH` | `0` or `1` | `0` | Double-tap matching mode. `0` = Mode A (any two play commands in fast succession stop playback; ideal for transmitters that randomize vocal tracks). `1` = Mode B (only identical sound triggers stop playback). |
 | `#WDP_ANNOUNCE` | `0` or `1` | `0` | Periodic WDP device announce packet sent over `Serial2` every 25–30s for automatic discovery by Wireless Communication Boards (WCB 6.2+). Off by default. |
+| `#VOICE_MODE` | `K2SO`, `B1`, `DROID`, `CUSTOM`, `MP3` | `K2SO` | Selects the voice synthesizer DSP pipeline (`K2SO`, `B1`, `DROID`, `CUSTOM`) or legacy embedded MP3 voice clips (`MP3`). |
+| `#VOICE_CUSTOM` | CSV parameters | *(K2SO defaults)* | Stores custom Flite + Droid DSP pipeline parameters (written automatically by `VCFG:SAVE`). |
 | `#VERSION` | Date string (e.g. `20261012`) | Auto-managed | Tracks the firmware version that last booted with the card. If updated firmware is detected, CHIRP speaks a voice notification on boot. Do not edit manually unless forcing voice feedback. |
 
 # SD Card Structure

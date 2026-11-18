@@ -16,7 +16,7 @@ bool parseIniFile() {
     FsFile iniFile = sd.open("CHIRP.INI", FILE_READ);
     
     if (iniFile) {
-        char buffer[128];
+        char buffer[256];
         while (iniFile.available()) {
             // Read a line, trim whitespace
             String line = iniFile.readStringUntil('\n');
@@ -159,6 +159,22 @@ bool parseIniFile() {
                         wdpAnnounce = (val == 1);
                     }
                 }
+                // Check VOICE_MODE
+                else if (strncasecmp(command, "VOICE_MODE", 10) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        setVoiceModeByName(value);
+                    }
+                }
+                // Check VOICE_CUSTOM
+                else if (strncasecmp(command, "VOICE_CUSTOM", 12) == 0) {
+                    char* value = strchr(command, ' ');
+                    if (value) {
+                        while (*(++value) == ' ');
+                        parseCustomVoiceConfig(value);
+                    }
+                }
             }
         }
         iniFile.close();
@@ -235,6 +251,12 @@ void writeIniFile() {
         iniFile.printf("#DOUBLE_TAP_TIMEOUT %u\n", doubleTapTimeoutMs);
         iniFile.printf("#DOUBLE_TAP_MATCH %d\n", doubleTapMatchOnly ? 1 : 0);
         iniFile.printf("#WDP_ANNOUNCE %d\n", wdpAnnounce ? 1 : 0);
+        iniFile.printf("#VOICE_MODE %s\n", getVoiceModeName());
+        if (isCustomVoiceModified() || strcasecmp(getVoiceModeName(), "CUSTOM") == 0) {
+            char customBuf[192];
+            formatCustomVoiceConfig(customBuf, sizeof(customBuf));
+            iniFile.printf("#VOICE_CUSTOM %s\n", customBuf);
+        }
         iniFile.println();
         iniFile.println("# Firmware Version (Last Booted)");
         iniFile.println("# Do not edit this manually unless you want to force voice feedback.");
@@ -447,6 +469,14 @@ void scanBank1() {
 #include "system_audio_data.h"
 
 void playVoiceFeedback(const char* filename) {
+    if (!filename || filename[0] == '\0') return;
+
+    // Synthesize via Flite + active Droid DSP pipeline unless MP3 mode is selected
+    if (!getActiveVoicePipeline().useLegacyMp3) {
+        playSynthesizedVoice(filename);
+        return;
+    }
+
     // 1. Strip the extension ".wav" or ".mp3" from the requested filename
     char basename[32];
     strncpy(basename, filename, sizeof(basename) - 1);
@@ -470,8 +500,8 @@ void playVoiceFeedback(const char* filename) {
     }
     
     if (!audioData || audioSize == 0) {
-        Serial.printf("[%lu] playVoiceFeedback: [NOT FOUND] '%s' in PROGMEM\n", millis(), basename);
-        // Silent fail if file missing from PROGMEM
+        Serial.printf("[%lu] playVoiceFeedback: [NOT FOUND] '%s' in PROGMEM, falling back to synth\n", millis(), basename);
+        playSynthesizedVoice(filename);
         return; 
     }
 
@@ -522,8 +552,14 @@ void playVoiceFeedback(const char* filename) {
 // Files are named 0000.wav ... 0100.wav based on the listing.
 void playVoiceNumber(int number) {
     if (number < 0) return;
-    if (number > 100) number = 100; // Cap at 100 for now based on file list
-    
+
+    if (!getActiveVoicePipeline().useLegacyMp3 || number > 100) {
+        char numStr[16];
+        snprintf(numStr, sizeof(numStr), "%d", number);
+        playSynthesizedVoice(numStr);
+        return;
+    }
+
     char numFile[16];
     snprintf(numFile, sizeof(numFile), "%04d.wav", number);
     playVoiceFeedback(numFile);
@@ -667,7 +703,7 @@ void playFirmwareUpdateFeedback(bool fwUpdated) {
     delay(200);
     playVoiceFeedback("firmware");  
     playVoiceFeedback("updated");
-    playVoiceFeedback("0002");
+    playVoiceFeedback(getActiveVoicePipeline().useLegacyMp3 ? "0002" : "to");
     playVoiceFeedback("new_version");
     delay(200);
     

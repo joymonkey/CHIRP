@@ -18,7 +18,7 @@
 // --- SINE LOOKUP TABLE ---
 // A full 256-value sine wave (0..255 corresponds to 0..360 degrees)
 // Values are signed 8-bit (-127 to 127) to save space, scaled up during mixing.
-const int8_t SINE_LUT[256] = {
+extern const int8_t SINE_LUT[256] = {
     0, 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36, 39, 42, 45,
     48, 51, 54, 57, 60, 63, 65, 68, 71, 73, 76, 78, 81, 83, 85, 88,
     90, 92, 94, 96, 98, 100, 102, 104, 106, 107, 109, 110, 112, 113, 115, 116,

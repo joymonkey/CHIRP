@@ -225,6 +225,8 @@ void updateRuntimeLEDs() {
                 } else if (streams[i].type == STREAM_TYPE_AAC_SD || streams[i].type == STREAM_TYPE_AAC_FLASH || 
                            streams[i].type == STREAM_TYPE_M4A_SD || streams[i].type == STREAM_TYPE_M4A_FLASH) {
                      setPixel(i, 255, 127, 0); // Orange
+                } else if (streams[i].type == STREAM_TYPE_VOICE_SYNTH || streams[i].type == STREAM_TYPE_MP3_PROGMEM) {
+                     setPixel(i, 0, 200, 255); // Cyan
                 } else {
                     setPixel(i, 0, 0, 255); // Blue (WAV)
                 }

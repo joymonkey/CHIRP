@@ -444,12 +444,127 @@ void handleMusb(Stream &serial, char* args) {
 
 void handlePvoice(Stream &serial, char* args) {
     if (args[0] == '\0') {
-        serial.println("ERR:PARAM - Format: PVOICE:filename");
+        serial.println("ERR:PARAM - Format: PVOICE:<token_or_phrase>");
         return;
     }
-    // Attempt play (It silently exits if voice file isn't found)
+    // Plays embedded MP3 (in MP3 mode) or synthesizes via Flite + Droid DSP
     playVoiceFeedback(args);
     sendSerialResponse(serial, "PACK:PVOICE");
+}
+
+void handleVmode(Stream &serial, char* args) {
+    while (*args == ' ') args++;
+
+    if (args[0] == '\0') {
+        sendSerialResponseF(serial, "VMODE:%s", getVoiceModeName());
+        if (&serial == &Serial) {
+            serial.print("Available voice modes:");
+            for (int i = 0; i < getVoicePipelineCount(); i++) {
+                const VoicePipeline* p = getVoicePipelineByIndex(i);
+                if (p) serial.printf(" %s", p->name);
+            }
+            serial.println();
+        }
+        return;
+    }
+
+    if (setVoiceModeByName(args)) {
+        writeIniFile();
+        sendSerialResponse(serial, "PACK:VMODE");
+        sendSerialResponseF(serial, "VMODE:%s", getVoiceModeName());
+
+        if (strcasecmp(getVoiceModeName(), "MP3") == 0) {
+            playVoiceFeedback("mp3");
+            playVoiceFeedback("mode");
+        } else {
+            char confirmPhrase[48];
+            snprintf(confirmPhrase, sizeof(confirmPhrase), "%s voice mode", getVoiceModeName());
+            playVoiceFeedback(confirmPhrase);
+        }
+    } else {
+        serial.println("ERR:PARAM - Unknown voice mode (K2SO, B1, DROID, CUSTOM, MP3)");
+    }
+}
+
+void handleVcfg(Stream &serial, char* args) {
+    while (*args == ' ') args++;
+
+    if (args[0] == '\0' || strcasecmp(args, "GET") == 0) {
+        char cfgBuf[120];
+        formatCustomVoiceConfig(cfgBuf, sizeof(cfgBuf));
+        sendSerialResponseF(serial, "VCFG:%s", cfgBuf);
+        if (&serial == &Serial) {
+            const VoicePipeline& p = getCustomVoicePipeline();
+            serial.printf("Custom Voice Pipeline (active mode: %s):\n", getVoiceModeName());
+            serial.printf("  pitch=%.1f std=%.1f stretch=%.2f formant=%.2f wobbleHz=%.1f wobble=%.3f\n",
+                          p.pitchMeanHz, p.pitchStdDevHz, p.durationStretch, p.formantScale,
+                          p.wobbleHz, p.wobbleDepth);
+            serial.printf("  hp=%.0f lp=%.0f peakHz=%.0f peakDb=%.1f peakQ=%.2f\n",
+                          p.hpCutoffHz, p.lpCutoffHz, p.peakFreqHz, p.peakGainDb, p.peakQ);
+            serial.printf("  rmHz=%.0f rmMix=%.2f combMs=%.1f combFb=%.2f combDamp=%.2f combMix=%.2f\n",
+                          p.ringModHz, p.ringModMix, p.combDelayMs, p.combFeedback, p.combDamping, p.combMix);
+            serial.printf("  bits=%u drive=%.2f gain=%.2f\n",
+                          p.crushBits, p.driveGain, p.outputGain);
+            serial.println("  Use VCFG:<key>=<val>[,...] (e.g. VCFG:COPY=B1 or VCFG:pitch=95,rmHz=400), then VCFG:SAVE");
+        }
+        return;
+    }
+
+    if (strcasecmp(args, "SAVE") == 0) {
+        setVoiceModeByName("CUSTOM");
+        writeIniFile();
+        sendSerialResponse(serial, "PACK:VCFG");
+        return;
+    }
+
+    if (strcasecmp(args, "RESET") == 0) {
+        resetCustomVoiceFromPreset("K2SO");
+        setVoiceModeByName("CUSTOM");
+        writeIniFile();
+        sendSerialResponse(serial, "PACK:VCFG");
+        return;
+    }
+
+    if (strncasecmp(args, "COPY=", 5) == 0) {
+        const char* preset = args + 5;
+        if (resetCustomVoiceFromPreset(preset)) {
+            setVoiceModeByName("CUSTOM");
+            sendSerialResponse(serial, "PACK:VCFG");
+        } else {
+            serial.println("ERR:PARAM - Unknown preset to copy");
+        }
+        return;
+    }
+
+    // Check if it's key=val pairs or raw CSV
+    if (strchr(args, '=') != nullptr) {
+        bool anyApplied = false;
+        char workBuf[128];
+        strncpy(workBuf, args, sizeof(workBuf) - 1);
+        workBuf[sizeof(workBuf) - 1] = '\0';
+
+        char* savePtr = nullptr;
+        char* token = strtok_r(workBuf, ",", &savePtr);
+        while (token != nullptr) {
+            while (*token == ' ') token++;
+            if (applyCustomVoiceParam(token)) {
+                anyApplied = true;
+            }
+            token = strtok_r(nullptr, ",", &savePtr);
+        }
+
+        if (anyApplied) {
+            setVoiceModeByName("CUSTOM");
+            sendSerialResponse(serial, "PACK:VCFG");
+        } else {
+            serial.println("ERR:PARAM - Invalid VCFG key=val");
+        }
+    } else if (parseCustomVoiceConfig(args)) {
+        setVoiceModeByName("CUSTOM");
+        sendSerialResponse(serial, "PACK:VCFG");
+    } else {
+        serial.println("ERR:PARAM - Format: VCFG:<key>=<val> | COPY=<preset> | SAVE | RESET");
+    }
 }
 
 // ===================================
@@ -556,6 +671,18 @@ void processSerialCommands(Stream &serial) {
                 }
                 else if (strncmp(cmdBuffer, "PVOICE:", 7) == 0) {
                     handlePvoice(serial, cmdBuffer + 7);
+                }
+                else if (strcmp(cmdBuffer, "VMODE") == 0) {
+                    handleVmode(serial, (char*)"");
+                }
+                else if (strncmp(cmdBuffer, "VMODE:", 6) == 0) {
+                    handleVmode(serial, cmdBuffer + 6);
+                }
+                else if (strcmp(cmdBuffer, "VCFG") == 0) {
+                    handleVcfg(serial, (char*)"");
+                }
+                else if (strncmp(cmdBuffer, "VCFG:", 5) == 0) {
+                    handleVcfg(serial, cmdBuffer + 5);
                 }
                 else {
                     serial.println("ERR:UNKNOWN");

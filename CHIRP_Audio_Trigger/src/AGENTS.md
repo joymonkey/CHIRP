@@ -11,7 +11,7 @@ Firmware for the **CHIRP Audio Trigger**, a custom **RP2350**-based PCB (Raspber
 - Streams audio directly from the SD card across all sound banks with near-zero latency; prototype-era SD-to-Flash syncing for Bank 1 has been retired.
 - Is controlled over **UART (Serial2)** by a droid's main controller (e.g. an ESP32), plus USB CDC (`Serial`) for debug. Also accepts legacy **SparkFun/Robertsonics MP3 Trigger** commands.
 - Can expose the SD card to a PC as a **USB Mass Storage device (MSC)**.
-- Speaks **voice feedback** (e.g. "baud rate setting 96 0 0") using small MP3 clips embedded in program flash.
+- Speaks **voice feedback** (e.g. "baud rate setting 96 0 0") via an offline **CMU Flite** (`cmu_us_kal`) TTS synthesizer + extensible real-time **Droid DSP pipeline** (`K2SO`, `B1`, `DROID`, `CUSTOM`), with optional fallback to small MP3 clips embedded in program flash (`MP3` mode).
 
 Primary use case is an Astromech droid sound system. See `../../README.md` for user-facing docs (SD layout, commands, buttons).
 
@@ -19,8 +19,8 @@ Primary use case is an Astromech droid sound system. See `../../README.md` for u
 
 - **Toolchain:** PlatformIO (`platformio.ini` in `CHIRP_Audio_Trigger/`, `src_dir = src` — every `.cpp` in `src/` is compiled).
   - Platform: `maxgerhardt/platform-raspberrypi`, board `rpipico2`, **Earle Philhower arduino-pico core pinned to 5.4.4**.
-  - CPU 250 MHz, `-Ofast`, `USE_TINYUSB`, 16 MB flash with **14 MB LittleFS**, **8 MB PSRAM** (CS = GPIO 0).
-  - Libraries: `arduino-libhelix` v0.9.2 (MP3/AAC decoders), `CRC32`, `Adafruit NeoPixel`. SdFat, LittleFS, I2S, TinyUSB come from the core.
+  - CPU 250 MHz, `-Ofast`, `USE_TINYUSB`, 16 MB flash with **10 MB LittleFS** (6 MB sketch partition to accommodate Flite + embedded MP3 fallback), **8 MB PSRAM** (CS = GPIO 0).
+  - Libraries: `arduino-libhelix` v0.9.2 (MP3/AAC decoders), `tts-flite` (`pschatzmann/arduino-flite`), `CRC32`, `Adafruit NeoPixel`. SdFat, LittleFS, I2S, TinyUSB come from the core.
 - Arduino IDE equivalents are referenced in log messages ("2MB Sketch, 14MB FS", "Fast (-Ofast)"). Keep `platformio.ini` and those settings consistent.
 - Build check: `pio run` from `CHIRP_Audio_Trigger/`. There are **no automated tests**; the only validation available to agents is a successful compile. Behavioral changes must be tested on hardware by the user — say so when relevant.
 - Do not change pinned versions (core, libhelix) without being asked; audio timing is sensitive to them.
@@ -33,7 +33,8 @@ Primary use case is an Astromech droid sound system. See `../../README.md` for u
 | `globals.cpp` | Definitions of most globals (`sd`, `i2s`, bank tables, mutexes, `log_message()`). |
 | `main.cpp` | `setup()` / `loop()` on **Core 0**. Boot sequence, button handling, auto-stop of finished streams, debug stats. Re-initializes `Serial2` immediately after `parseIniFile()` to apply configured baud rate on boot. Header comment documents CHIRP.INI keys and commands. |
 | `audio_playback.cpp` | Audio engine. `initAudioSystem()`, `fillStreamBuffers()` (Core 0 producer: read file → decode → ring buffer), `Mixer::processSample()` and `setup1()/loop1()` (**Core 1** consumer → I2S), MP3/AAC decoder callbacks with resampling, `startStream()`, `startProgmemStream()`, `stopStream()`, chirp/sweep tone generator `playChirp()`. Also owns stream/decoder config globals (`maxStreams`, `streamBufferSize`, …). |
-| `file_management.cpp` | CHIRP.INI parse/write, firmware-version check (LittleFS `/version.txt`), SD scanning (Bank 1 pages, Bank 1 sounds + variant grouping, Banks 2–6, root tracks with 64-char buffers), retired Bank 1 flash sync stub, format helpers, and all **voice-feedback** helpers (`playVoiceFeedback`, `playVoiceNumber`, `play*Feedback`). |
+| `file_management.cpp` | CHIRP.INI parse/write, firmware-version check (LittleFS `/version.txt`), SD scanning (Bank 1 pages, Bank 1 sounds + variant grouping, Banks 2–6, root tracks with 64-char buffers), retired Bank 1 flash sync stub, format helpers, and all **voice-feedback** helpers (`playVoiceFeedback`, `playVoiceNumber`, `play*Feedback`) dispatching to `voice_synth` or legacy PROGMEM MP3s. |
+| `voice_synth.h/.cpp` | Offline CMU Flite TTS synthesizer + extensible `VoicePipeline` DSP chain (`K2SO`, `B1`, `DROID`, `CUSTOM`, `MP3`), token/number/acronym normalizer, 3-band biquad EQ, ring modulator, metallic comb resonator, and bitcrusher/drive pushing 44.1 kHz stereo PCM into Stream 0. |
 | `serial_commands.cpp` | CHIRP text command parser/dispatcher (`processSerialCommands`) with UART silence reset (150 ms) to purge line noise, and handlers (`handlePlay`, `handleStop`, `S`/`P` aliases, …). |
 | `mp3_compat.cpp` | Legacy MP3 Trigger non-blocking state machine parser (`checkAndHandleMp3Command`) for 1-byte (`O`,`F`,`R`) and 2-byte (`t`,`T`,`v`,`p`) commands with 500 ms safety timeout, smart Bank 1 fallback in `action_playTrackById()`, and `action_*` functions used by both legacy commands and the physical buttons. |
 | `serial_queue.cpp` | Outgoing ring queue for Serial2 replies; `isCpuBusy()` throttle used by queue and LEDs. |
@@ -73,7 +74,7 @@ fillStreamBuffers():                               if g_allowAudio: i2s.begin on
 - RevA boards have only 2 MB PSRAM; RevB 8 MB. Be conservative with defaults.
 
 ### Stream types (`StreamType`)
-`WAV_FLASH, WAV_SD, MP3_SD, MP3_FLASH, MP3_PROGMEM, AAC_SD, AAC_FLASH, M4A_SD, M4A_FLASH`. Path prefix `/flash/` means LittleFS, otherwise SD. Format is chosen purely by **file extension** (`getAudioFormat`). When adding a type, update: `startStream`, `fillStreamBuffers`, `stopStream` (decoder release + file close), MSC safety checks, `isCpuBusy`, and LED colors.
+`WAV_FLASH, WAV_SD, MP3_SD, MP3_FLASH, MP3_PROGMEM, AAC_SD, AAC_FLASH, M4A_SD, M4A_FLASH, STREAM_TYPE_VOICE_SYNTH`. Path prefix `/flash/` means LittleFS, otherwise SD. Format is chosen purely by **file extension** (`getAudioFormat`). When adding a type, update: `startStream`, `fillStreamBuffers`, `stopStream` (decoder release + file close), MSC safety checks, `isCpuBusy`, and LED colors.
 
 ### Thread safety
 - `sd_mutex`, `flash_mutex`, `log_mutex` (pico SDK, **non-recursive**). Wrap every SdFat / LittleFS access in the matching mutex.
@@ -92,7 +93,7 @@ LEDs → USB Serial / Serial2 → SPI1 pins → buttons, MSC pin → Serial2 que
 - **Banks 2–6** (`2_Name` or `2B_Name`): flat file lists in `SDBank` (max `MAX_SD_BANKS`=20 dirs, `MAX_FILES_PER_BANK`=100, names < 64 chars). Order = SdFat directory order (not sorted).
 - **Root tracks**: audio files in SD root, sorted alphabetically, names up to 63 chars (`MAX_ROOT_TRACK_NAME_LEN 64`), used by legacy commands and buttons.
 - **Manifest checksum**: CRC32 of all Bank 1 variant names + Bank 2–6 filenames, reported in `GMAN` as `MSUM` so the host can detect changes.
-- **CHIRP.INI** (SD root, lines starting with `#KEY value`): `BANK1_PAGE`, `BAUD_RATE`, `MAX_STREAMS` (1–10), `STREAM_BUFFER_SIZE` (SMALL/MEDIUM/LARGE/KB, rounded down to power of 2, 32–4096), `LEGACY_MONOPHONIC`, `DOUBLE_TAP_TIMEOUT`, `DOUBLE_TAP_MATCH`, `VERSION`. `writeIniFile()` regenerates the whole file — if you add a key, add it to **both** parse and write.
+- **CHIRP.INI** (SD root, lines starting with `#KEY value`): `BANK1_PAGE`, `BAUD_RATE`, `MAX_STREAMS` (1–10), `STREAM_BUFFER_SIZE` (SMALL/MEDIUM/LARGE/KB, rounded down to power of 2, 32–4096), `LEGACY_MONOPHONIC`, `DOUBLE_TAP_TIMEOUT`, `DOUBLE_TAP_MATCH`, `WDP_ANNOUNCE`, `VOICE_MODE` (`K2SO`/`B1`/`DROID`/`CUSTOM`/`MP3`), `VOICE_CUSTOM`, `VERSION`. `writeIniFile()` regenerates the whole file — if you add a key, add it to **both** parse and write.
 
 ## 6. Serial protocol
 
@@ -111,7 +112,8 @@ On `Serial2`, a 150 ms silence timeout discards any stale un-terminated line buf
 | `LIST`, `STAT:<stream>` | human-readable / `STAT:playing,<file>,<vol>` |
 | `BAUD:<rate>`, `BPAGE:<A-Z>` | persisted to INI; BPAGE needs reboot |
 | `STRM:<1-10>` (or `MSTRM:<1-10>`) | `PACK:STRM`, `STRM:<n>`; updates `maxStreams` live & persists to INI |
-| `MUSB` / `MUSB:1` / `MUSB:0`, `CCRC`, `PVOICE:<clip>` | `PACK:...` |
+| `MUSB` / `MUSB:1` / `MUSB:0`, `CCRC`, `PVOICE:<token_or_phrase>` | `PACK:...` |
+| `VMODE` / `VMODE:<name>`, `VCFG` / `VCFG:<cmd>` | `PACK:VMODE`, `VMODE:<name>` / `PACK:VCFG`, `VCFG:<csv>` |
 
 Stream selection for PLAY: first inactive stream, else **steals stream 0**. Volume mapping: protocol 0–99 → `float 0..1`; legacy `v` 0 (loud)–255 (silent); `masterAttenMultiplier` is 0–256 fixed-point.
 

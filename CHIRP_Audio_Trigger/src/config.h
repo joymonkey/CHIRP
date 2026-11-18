@@ -8,6 +8,7 @@
 #include "MP3DecoderHelix.h"
 #include "AACDecoderHelix.h"
 #include <Adafruit_TinyUSB.h>
+#include "voice_synth.h"
 
 using namespace libhelix;
 
@@ -146,6 +147,7 @@ extern char rootTracks[MAX_ROOT_TRACKS][MAX_ROOT_TRACK_NAME_LEN]; // "NNN.MP3"
 extern int rootTrackCount;
 
 // Test Tone State
+extern const int8_t SINE_LUT[256];
 extern volatile bool testToneActive;
 extern volatile uint32_t testTonePhase;
 extern volatile int16_t masterAttenMultiplier;
@@ -201,7 +203,8 @@ enum StreamType
     STREAM_TYPE_AAC_SD,
     STREAM_TYPE_AAC_FLASH,
     STREAM_TYPE_M4A_SD,
-    STREAM_TYPE_M4A_FLASH
+    STREAM_TYPE_M4A_FLASH,
+    STREAM_TYPE_VOICE_SYNTH
 };
 
 enum AudioFormat
