@@ -542,7 +542,7 @@ void playVoiceFeedback(const char* filename) {
     }
 #endif
 
-    // Synthesize via Flite + active Droid DSP pipeline
+    // Synthesize via Klatt + active Droid DSP pipeline
     playSynthesizedVoice(filename);
 }
 

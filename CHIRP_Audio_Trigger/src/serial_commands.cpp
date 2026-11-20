@@ -456,7 +456,7 @@ void handlePvoice(Stream &serial, char* args) {
         serial.printf("ERR:PARAM - Phrase too long (max %d chars)\n", VOICE_SYNTH_MAX_PHRASE_LEN);
         return;
     }
-    // Plays embedded MP3 (in MP3 mode) or synthesizes via Flite + Droid DSP
+    // Plays embedded MP3 (in MP3 mode) or synthesizes via Klatt + Droid DSP
     playVoiceFeedback(args);
     sendSerialResponse(serial, "PACK:PVOICE");
 }

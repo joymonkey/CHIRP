@@ -15,7 +15,7 @@ using namespace libhelix;
 // ===================================
 // Constants
 // ===================================
-#define VERSION_STRING "20261108"
+#define VERSION_STRING "20261120"
 // #define DEBUG // Comment out to disable debug logging
 
 // Hardware Configuration
@@ -35,16 +35,24 @@ using namespace libhelix;
 #define I2S_LRCK 10
 #define I2S_DATA 11
 #define NEOPIXEL_PIN 19   // CHIRP Audio Trigger PCB has 3 neopixels on pin 19
+#ifndef PIN_MSC_TRIGGER
 #define PIN_MSC_TRIGGER 7 // Pull low to enable MSC mode
+#endif
 
 // UART Pins (Serial2)
 #define UART_TX 4
 #define UART_RX 5
 
 // Button Configuration
+#ifndef PIN_BTN_NAV
 #define PIN_BTN_NAV 17 // Start/Stop
+#endif
+#ifndef PIN_BTN_FWD
 #define PIN_BTN_FWD 16 // Next
+#endif
+#ifndef PIN_BTN_REV
 #define PIN_BTN_REV 18 // Prev
+#endif
 
 // Flash Maintenance (LittleFS is only used for firmware version tracking)
 // #define FORMAT_FLASH // Uncomment to force format LittleFS flash on boot

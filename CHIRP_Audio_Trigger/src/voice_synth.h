@@ -10,7 +10,7 @@
 // HOW TO DEFINE A NEW DROID VOICE PIPELINE:
 // ============================================================================
 // Each VoicePipeline struct defines:
-//   1. Flite Synthesis Prosody (pitchMeanHz, pitchStdDevHz, durationStretch)
+//   1. Klatt Synthesis Prosody (pitchMeanHz, pitchStdDevHz, durationStretch)
 //   2. Vocal Tract Formant Scaling (formantScale: <1.0 = deeper/larger head,
 //      >1.0 = smaller/nasal throat; pitch & speed are automatically compensated)
 //   3. Pitch Wobble LFO (wobbleHz, wobbleDepth: subtle vocoder instability)
@@ -31,7 +31,7 @@ struct VoicePipeline {
     float bwScale;              // Formant bandwidth multiplier (0.35..2.0; lower = sharper vocoder resonance)
     bool steppedPitch;          // If true, quantize pitch into crisp musical vocoder steps (DAFT mode)
 
-    // Stage 0: Flite Prosody & Formant Shift
+    // Stage 0: Klatt Prosody & Formant Shift
     float pitchMeanHz;          // Target fundamental pitch F0 in Hz (e.g. 86 = deep, 175 = high)
     float pitchStdDevHz;        // Pitch intonation variance in Hz (e.g. 4.5 = deadpan, 22 = lively)
     float durationStretch;      // Tempo multiplier (<1.0 = faster, 1.0 = normal, >1.0 = slower)
@@ -83,7 +83,7 @@ bool resetCustomVoiceFromPreset(const char* presetName);
 #define VOICE_SYNTH_MAX_PHRASE_LEN 112
 void normalizeVoiceToken(const char* rawInput, char* outPhrase, size_t outSize);
 
-// Synthesize normalized text through Flite + active VoicePipeline DSP into Stream 0
+// Synthesize normalized text through Klatt + active VoicePipeline DSP into Stream 0
 bool playSynthesizedVoice(const char* rawTokenOrPhrase);
 
 #endif // VOICE_SYNTH_H

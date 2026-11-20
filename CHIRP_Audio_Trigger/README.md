@@ -7,7 +7,7 @@ The CHIRP Audio Trigger is a sound file player similar to the trusty Sparkfun/Ro
 
 # Features
 - **Multi-Stream Audio Mixing:** Decode, play, and mix multiple simultaneous audio streams (MP3, AAC/M4A, and uncompressed WAV; stereo or mono, 44.1 kHz or 22.05 kHz sample rates) directly to an I2S DAC.
-- **Synthesized Droid Voice & Audio Feedback:** Built-in offline CMU Flite text-to-speech synthesizer with a configurable real-time Droid DSP pipeline (`K2SO` security droid, `B1` battle droid, `DROID`, `CUSTOM`) plus optional legacy embedded MP3 voice clips (`MP3` mode), triggered internally or via serial (`PVOICE`).
+- **Synthesized Droid Voice & Audio Feedback:** Built-in offline Klatt-80 formant text-to-speech synthesizer with a configurable real-time Droid DSP pipeline (`DAFT` harmonized vocoder, `K2SO` security droid, `B1` battle droid, `DROID`, `CUSTOM`) plus optional legacy embedded MP3 voice clips (`MP3` mode), triggered internally or via serial (`PVOICE`).
 - **RP2350 + PSRAM Architecture:** Powered by the Raspberry Pi RP2350 microcontroller and 8 MB of high-speed external PSRAM for deep ring buffering, eliminating playback latency and SD card read stalls.
 - **Drop-in Compatibility:** Supports legacy SparkFun/Robertsonics MP3 Trigger serial commands alongside CHIRP's high-level extended command set for seamless integration into existing droid systems (Padawan, Shadow, Kyber).
 - **Dynamic Sound Manifest & Telemetry:** Scans SD card sound banks on boot to provide the droid's primary microcontroller with track manifests and names for real-time telemetry display on radio transmitters.
@@ -38,7 +38,7 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 - `VOL:<vol>` / `VOL:<stream>,<vol>` (set global volume or individual stream volume, 0–99)
 - `STAT:<stream>` (get the current status of a specified stream)
 - `PVOICE:<token_or_phrase>` (speak a system voice token like `PVOICE:firmware` or any arbitrary phrase like `PVOICE:roger roger`)
-- `VMODE` / `VMODE:<mode>` (query or switch the voice pipeline: `K2SO`, `B1`, `DROID`, `CUSTOM`, or `MP3`; persists to `CHIRP.INI`)
+- `VMODE` / `VMODE:<mode>` (query or switch the voice pipeline: `DAFT`, `K2SO`, `B1`, `DROID`, `CUSTOM`, or `MP3`; persists to `CHIRP.INI`)
 - `VCFG` / `VCFG:<key>=<val>` (inspect or live-tune the `CUSTOM` voice DSP pipeline; supports `COPY=<preset>`, `SAVE`, and `RESET`)
 - `GMAN` (Get Manifest of how many sounds are in each page of each Sound Bank)
 - `LIST` (List sounds stored in Sound Bank 1 as well as sound counts in Sound Banks 2-6) 
@@ -54,15 +54,16 @@ Support for the same serial commands as the legacy SparkFun/Robertsonics MP3 Tri
 CHIRP Audio Trigger supports both real-time **offline voice synthesis** (default) and legacy pre-recorded MP3 clips (`MP3` mode) for system status announcements (firmware updates, baud rate changes, sound bank/page selections, USB mode toggles, and SD card warnings) as well as arbitrary on-demand speech via `PVOICE:<phrase>` (for example, `PVOICE:firmware`, `PVOICE:battery`, or `PVOICE:roger roger`).
 
 ### Built-In Voice Pipelines (`VMODE`)
-The synthesizer pairs **CMU Flite** (`cmu_us_kal`) with a real-time 44.1 kHz **Droid DSP Pipeline** (prosody & formant scaling, pitch wobble LFO, 3-band biquad EQ, ring modulator, metallic chassis comb resonator, and vocoder grit/bitcrusher):
-- **`K2SO`** *(Default)*: Deep, deadpan Imperial security droid with a hollow cranial comb resonance and subtle high-frequency metallic sheen.
-- **`B1`**: High-pitched, nasal Separatist battle droid with comlink bandpass filtering, 78 Hz ring-modulated rattle, and lo-fi vocoder grit.
+The synthesizer pairs a streaming 16 kHz **Klatt-80 cascade/parallel formant synthesizer** (with NRL text-to-phoneme conversion, natural English number/unit/ordinal/time parsing, selectable excitation waveforms, and British RP rules) with a real-time 44.1 kHz **Droid DSP Pipeline** (prosody & formant scaling, pitch wobble LFO, 3-band biquad EQ, ring modulator, metallic chassis comb resonator, and vocoder grit/bitcrusher):
+- **`DAFT`** *(Default)*: Harmonized chord talkbox/vocoder voice with musical quantized pitch steps.
+- **`K2SO`**: Articulate British RP Imperial security droid with a hollow cranial comb resonance and subtle high-frequency metallic sheen.
+- **`B1`**: High-pitched, nasal Separatist battle droid with metallic pulse excitation, comlink bandpass filtering, 78 Hz ring-modulated rattle, and lo-fi vocoder grit.
 - **`DROID`**: Clean, balanced synthetic droid voice.
 - **`CUSTOM`**: User-tunable pipeline configurable live over serial (`VCFG`) or persisted in `CHIRP.INI` (`#VOICE_CUSTOM`).
-- **`MP3`**: Plays the legacy embedded 16 kbps mono MP3 clips compiled into `src/system_audio_data.cpp` (automatically falling back to synthesized speech for arbitrary phrases not in the embedded clip list).
+- **`MP3`**: Plays the legacy embedded 16 kbps mono MP3 clips compiled into `src/system_audio_data.cpp` when `ENABLE_LEGACY_MP3_VOICE` is enabled in `src/config.h` (automatically falling back to synthesized speech for arbitrary phrases not in the embedded clip list).
 
 ### Tuning or Defining New Voice Pipelines
-- **At Runtime (No Recompile):** Start from an existing preset with `VCFG:COPY=B1`, adjust parameters such as `VCFG:pitch=185,rmHz=85,rmMix=0.35,combMs=3.0,bits=10`, test with `PVOICE:roger roger`, and save to `CHIRP.INI` with `VCFG:SAVE`.
+- **At Runtime (No Recompile):** Start from an existing preset with `VCFG:COPY=DAFT` (or `K2SO`, `B1`, `DROID`), adjust parameters such as `VCFG:src=chord,bw=0.58,step=1` or `VCFG:pitch=185,rmHz=85,rmMix=0.35,combMs=3.0,bits=10` (plus `uk=1` for British RP rules), test with `PVOICE:roger roger`, and save to `CHIRP.INI` with `VCFG:SAVE`.
 - **In Firmware Source:** Append a new `VoicePipeline` struct entry to `kBuiltInVoicePipelines[]` in `src/voice_synth.cpp` (documented in `src/voice_synth.h`).
 
 ### Generating Legacy Embedded MP3 Clips (`MP3` Mode)
@@ -105,8 +106,8 @@ Lines in `CHIRP.INI` begin with `#KEY <value>`. The following options are suppor
 | `#DOUBLE_TAP_TIMEOUT` | Milliseconds (`0`–`5000`) | `600` | Window in milliseconds to detect a double-tap gesture to stop all audio streams. Set to `0` to disable double-tap silencing entirely. *(Convenience alias: `#DOUBLE_TAP_ENABLE 0`)* |
 | `#DOUBLE_TAP_MATCH` | `0` or `1` | `0` | Double-tap matching mode. `0` = Mode A (any two play commands in fast succession stop playback; ideal for transmitters that randomize vocal tracks). `1` = Mode B (only identical sound triggers stop playback). |
 | `#WDP_ANNOUNCE` | `0` or `1` | `0` | Periodic WDP device announce packet sent over `Serial2` every 25–30s for automatic discovery by Wireless Communication Boards (WCB 6.2+). Off by default. |
-| `#VOICE_MODE` | `K2SO`, `B1`, `DROID`, `CUSTOM`, `MP3` | `K2SO` | Selects the voice synthesizer DSP pipeline (`K2SO`, `B1`, `DROID`, `CUSTOM`) or legacy embedded MP3 voice clips (`MP3`). |
-| `#VOICE_CUSTOM` | CSV parameters | *(K2SO defaults)* | Stores custom Flite + Droid DSP pipeline parameters (written automatically by `VCFG:SAVE`). |
+| `#VOICE_MODE` | `DAFT`, `K2SO`, `B1`, `DROID`, `CUSTOM`, `MP3` | `DAFT` | Selects the voice synthesizer DSP pipeline (`DAFT`, `K2SO`, `B1`, `DROID`, `CUSTOM`) or legacy embedded MP3 voice clips (`MP3`). |
+| `#VOICE_CUSTOM` | CSV parameters | *(DAFT defaults)* | Stores custom Klatt + Droid DSP pipeline parameters (written automatically by `VCFG:SAVE`). |
 | `#VERSION` | Date string (e.g. `20261012`) | Auto-managed | Tracks the firmware version that last booted with the card. If updated firmware is detected, CHIRP speaks a voice notification on boot. Do not edit manually unless forcing voice feedback. |
 
 # SD Card Structure
