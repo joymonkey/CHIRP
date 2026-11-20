@@ -25,6 +25,7 @@
 struct VoicePipeline {
     const char* name;           // Mode identifier (e.g. "K2SO", "B1", "DROID", "CUSTOM", "MP3")
     bool useLegacyMp3;          // If true, play from sysAudioFiles[] MP3s first (fallback to synth)
+    bool britishRp;             // If true, apply British RP phoneme & stepped high-falling inflection rules
 
     // Stage 0: Flite Prosody & Formant Shift
     float pitchMeanHz;          // Target fundamental pitch F0 in Hz (e.g. 86 = deep, 175 = high)
@@ -75,6 +76,7 @@ bool applyCustomVoiceParam(const char* keyVal);
 bool resetCustomVoiceFromPreset(const char* presetName);
 
 // Normalize legacy PVOICE token or arbitrary text into speakable English phrase
+#define VOICE_SYNTH_MAX_PHRASE_LEN 64
 void normalizeVoiceToken(const char* rawInput, char* outPhrase, size_t outSize);
 
 // Synthesize normalized text through Flite + active VoicePipeline DSP into Stream 0

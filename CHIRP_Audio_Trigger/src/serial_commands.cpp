@@ -443,8 +443,17 @@ void handleMusb(Stream &serial, char* args) {
 }
 
 void handlePvoice(Stream &serial, char* args) {
-    if (args[0] == '\0') {
+    while (*args == ' ' || *args == '\t') args++;
+    size_t len = strlen(args);
+    while (len > 0 && (args[len - 1] == ' ' || args[len - 1] == '\t')) {
+        args[--len] = '\0';
+    }
+    if (len == 0) {
         serial.println("ERR:PARAM - Format: PVOICE:<token_or_phrase>");
+        return;
+    }
+    if (len > VOICE_SYNTH_MAX_PHRASE_LEN) {
+        serial.printf("ERR:PARAM - Phrase too long (max %d chars)\n", VOICE_SYNTH_MAX_PHRASE_LEN);
         return;
     }
     // Plays embedded MP3 (in MP3 mode) or synthesizes via Flite + Droid DSP
@@ -473,16 +482,23 @@ void handleVmode(Stream &serial, char* args) {
         sendSerialResponse(serial, "PACK:VMODE");
         sendSerialResponseF(serial, "VMODE:%s", getVoiceModeName());
 
+#ifdef ENABLE_LEGACY_MP3_VOICE
         if (strcasecmp(getVoiceModeName(), "MP3") == 0) {
             playVoiceFeedback("mp3");
             playVoiceFeedback("mode");
-        } else {
+        } else
+#endif
+        {
             char confirmPhrase[48];
             snprintf(confirmPhrase, sizeof(confirmPhrase), "%s voice mode", getVoiceModeName());
             playVoiceFeedback(confirmPhrase);
         }
     } else {
+#ifdef ENABLE_LEGACY_MP3_VOICE
         serial.println("ERR:PARAM - Unknown voice mode (K2SO, B1, DROID, CUSTOM, MP3)");
+#else
+        serial.println("ERR:PARAM - Unknown voice mode (K2SO, B1, DROID, CUSTOM)");
+#endif
     }
 }
 
@@ -503,8 +519,8 @@ void handleVcfg(Stream &serial, char* args) {
                           p.hpCutoffHz, p.lpCutoffHz, p.peakFreqHz, p.peakGainDb, p.peakQ);
             serial.printf("  rmHz=%.0f rmMix=%.2f combMs=%.1f combFb=%.2f combDamp=%.2f combMix=%.2f\n",
                           p.ringModHz, p.ringModMix, p.combDelayMs, p.combFeedback, p.combDamping, p.combMix);
-            serial.printf("  bits=%u drive=%.2f gain=%.2f\n",
-                          p.crushBits, p.driveGain, p.outputGain);
+            serial.printf("  bits=%u drive=%.2f gain=%.2f uk=%d\n",
+                          p.crushBits, p.driveGain, p.outputGain, p.britishRp ? 1 : 0);
             serial.println("  Use VCFG:<key>=<val>[,...] (e.g. VCFG:COPY=B1 or VCFG:pitch=95,rmHz=400), then VCFG:SAVE");
         }
         return;

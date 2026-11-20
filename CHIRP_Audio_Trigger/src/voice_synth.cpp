@@ -3,12 +3,15 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <setjmp.h>
 
 // Include Flite core C API directly (avoids flite_out_arduino.h's config.h collision)
 #include "flite.h"
 
 extern "C" {
     cst_voice *register_cmu_us_kal(const char *voxdir);
+    cst_utterance *cmu_postlex(cst_utterance *u);
+    cst_utterance *us_f0_model(cst_utterance *u);
 }
 
 // ============================================================================
@@ -20,31 +23,33 @@ static const VoicePipeline kBuiltInVoicePipelines[] = {
     {
         .name            = "K2SO",
         .useLegacyMp3    = false,
-        // Deep, deadpan Imperial security droid
-        .pitchMeanHz     = 86.0f,
-        .pitchStdDevHz   = 4.5f,
-        .durationStretch = 0.95f,
-        .formantScale    = 0.91f,
+        .britishRp       = true,
+        // Articulate, brisk British RP Imperial security droid (Alan Tudyk cadence)
+        .pitchMeanHz     = 116.0f,
+        .pitchStdDevHz   = 18.5f,
+        .durationStretch = 0.90f,
+        .formantScale    = 0.97f,
         .wobbleHz        = 0.0f,
         .wobbleDepth     = 0.0f,
-        .hpCutoffHz      = 120.0f,
-        .lpCutoffHz      = 4200.0f,
-        .peakFreqHz      = 1750.0f,
-        .peakGainDb      = 4.5f,
-        .peakQ           = 1.4f,
-        .ringModHz       = 540.0f,
-        .ringModMix      = 0.12f,
-        .combDelayMs     = 6.8f,
-        .combFeedback    = 0.42f,
-        .combDamping     = 0.35f,
-        .combMix         = 0.45f,
+        .hpCutoffHz      = 165.0f,
+        .lpCutoffHz      = 4800.0f,
+        .peakFreqHz      = 1380.0f,
+        .peakGainDb      = 4.2f,
+        .peakQ           = 1.6f,
+        .ringModHz       = 420.0f,
+        .ringModMix      = 0.03f,
+        .combDelayMs     = 3.1f,
+        .combFeedback    = 0.28f,
+        .combDamping     = 0.30f,
+        .combMix         = 0.28f,
         .crushBits       = 16,
-        .driveGain       = 1.15f,
+        .driveGain       = 1.10f,
         .outputGain      = 1.35f,
     },
     {
         .name            = "B1",
         .useLegacyMp3    = false,
+        .britishRp       = false,
         // High-pitched, nasal Separatist battle droid with metallic clank
         .pitchMeanHz     = 172.0f,
         .pitchStdDevHz   = 22.0f,
@@ -70,6 +75,7 @@ static const VoicePipeline kBuiltInVoicePipelines[] = {
     {
         .name            = "DROID",
         .useLegacyMp3    = false,
+        .britishRp       = false,
         // Clean synthetic droid voice
         .pitchMeanHz     = 105.0f,
         .pitchStdDevHz   = 9.0f,
@@ -97,9 +103,11 @@ static const VoicePipeline kBuiltInVoicePipelines[] = {
 static const int kNumBuiltInPipelines =
     (int)(sizeof(kBuiltInVoicePipelines) / sizeof(kBuiltInVoicePipelines[0]));
 
+#ifdef ENABLE_LEGACY_MP3_VOICE
 static const VoicePipeline kLegacyMp3Pipeline = {
     .name            = "MP3",
     .useLegacyMp3    = true,
+    .britishRp       = false,
     .pitchMeanHz     = 86.0f,
     .pitchStdDevHz   = 4.5f,
     .durationStretch = 0.95f,
@@ -121,6 +129,7 @@ static const VoicePipeline kLegacyMp3Pipeline = {
     .driveGain       = 1.15f,
     .outputGain      = 1.35f,
 };
+#endif
 
 // Runtime State
 static VoicePipeline s_customPipeline = kBuiltInVoicePipelines[0];
@@ -180,16 +189,25 @@ void initVoiceSynth() {
 }
 
 int getVoicePipelineCount() {
+#ifdef ENABLE_LEGACY_MP3_VOICE
     // Built-in presets + CUSTOM + MP3
     return kNumBuiltInPipelines + 2;
+#else
+    // Built-in presets + CUSTOM
+    return kNumBuiltInPipelines + 1;
+#endif
 }
 
 const VoicePipeline* getVoicePipelineByIndex(int idx) {
     if (!s_voiceInitialized) initVoiceSynth();
     if (idx < 0 || idx >= getVoicePipelineCount()) return nullptr;
     if (idx < kNumBuiltInPipelines) return &kBuiltInVoicePipelines[idx];
+#ifdef ENABLE_LEGACY_MP3_VOICE
     if (idx == kNumBuiltInPipelines) return &s_customPipeline;
     return &kLegacyMp3Pipeline;
+#else
+    return &s_customPipeline;
+#endif
 }
 
 bool setVoiceModeByName(const char* modeName) {
@@ -259,11 +277,11 @@ bool parseCustomVoiceConfig(const char* configLine) {
     strncpy(buf, configLine, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = '\0';
 
-    float vals[20];
+    float vals[21];
     int idx = 0;
     char* savePtr = nullptr;
     char* tok = strtok_r(buf, ",", &savePtr);
-    while (tok != nullptr && idx < 20) {
+    while (tok != nullptr && idx < 21) {
         while (*tok == ' ') tok++;
         char* endPtr = nullptr;
         vals[idx++] = strtof(tok, &endPtr);
@@ -294,6 +312,9 @@ bool parseCustomVoiceConfig(const char* configLine) {
     p.crushBits       = (uint8_t)((int)(vals[17] + 0.5f));
     p.driveGain       = vals[18];
     p.outputGain      = (idx >= 20) ? vals[19] : 1.30f;
+    if (idx >= 21) {
+        p.britishRp = (vals[20] >= 0.5f);
+    }
 
     clampPipelineParams(p);
     p.name = "CUSTOM";
@@ -306,13 +327,14 @@ void formatCustomVoiceConfig(char* outBuf, size_t outSize) {
     if (!outBuf || outSize == 0) return;
     const VoicePipeline& p = getCustomVoicePipeline();
     snprintf(outBuf, outSize,
-             "%.1f,%.1f,%.2f,%.2f,%.1f,%.3f,%.0f,%.0f,%.0f,%.1f,%.2f,%.0f,%.2f,%.1f,%.2f,%.2f,%.2f,%u,%.2f,%.2f",
+             "%.1f,%.1f,%.2f,%.2f,%.1f,%.3f,%.0f,%.0f,%.0f,%.1f,%.2f,%.0f,%.2f,%.1f,%.2f,%.2f,%.2f,%u,%.2f,%.2f,%d",
              p.pitchMeanHz, p.pitchStdDevHz, p.durationStretch, p.formantScale,
              p.wobbleHz, p.wobbleDepth,
              p.hpCutoffHz, p.lpCutoffHz, p.peakFreqHz, p.peakGainDb, p.peakQ,
              p.ringModHz, p.ringModMix,
              p.combDelayMs, p.combFeedback, p.combDamping, p.combMix,
-             (unsigned)p.crushBits, p.driveGain, p.outputGain);
+             (unsigned)p.crushBits, p.driveGain, p.outputGain,
+             p.britishRp ? 1 : 0);
 }
 
 bool applyCustomVoiceParam(const char* keyVal) {
@@ -357,6 +379,7 @@ bool applyCustomVoiceParam(const char* keyVal) {
     else if (strcasecmp(key, "bits") == 0)     p.crushBits = (uint8_t)((int)(val + 0.5f));
     else if (strcasecmp(key, "drive") == 0)    p.driveGain = val;
     else if (strcasecmp(key, "gain") == 0)     p.outputGain = val;
+    else if (strcasecmp(key, "uk") == 0 || strcasecmp(key, "british") == 0) p.britishRp = (val >= 0.5f);
     else return false;
 
     clampPipelineParams(p);
@@ -601,6 +624,290 @@ struct BiquadFilter {
     }
 };
 
+// ============================================================================
+// British RP Phonology & Stepped High-Falling Prosody Hooks for Flite
+// ============================================================================
+static bool s_useBritishRp = true;
+
+static bool isFliteVowel(const char* ph) {
+    if (!ph) return false;
+    return ( strcmp(ph, "aa") == 0 || strcmp(ph, "ae") == 0 || strcmp(ph, "ah") == 0 ||
+             strcmp(ph, "ao") == 0 || strcmp(ph, "aw") == 0 || strcmp(ph, "ax") == 0 ||
+             strcmp(ph, "axr") == 0 || strcmp(ph, "ay") == 0 || strcmp(ph, "eh") == 0 ||
+             strcmp(ph, "er") == 0 || strcmp(ph, "ey") == 0 || strcmp(ph, "ih") == 0 ||
+             strcmp(ph, "iy") == 0 || strcmp(ph, "ow") == 0 || strcmp(ph, "oy") == 0 ||
+             strcmp(ph, "uh") == 0 || strcmp(ph, "uw") == 0 );
+}
+
+static bool isShortCheckedVowel(const char* ph) {
+    if (!ph) return false;
+    return ( strcmp(ph, "ih") == 0 || strcmp(ph, "eh") == 0 || strcmp(ph, "ae") == 0 ||
+             strcmp(ph, "uh") == 0 || strcmp(ph, "ah") == 0 || strcmp(ph, "ao") == 0 );
+}
+
+static bool isCommonTrapNWord(const char* w) {
+    if (!w) return false;
+    return ( strcasecmp(w, "and") == 0 || strcasecmp(w, "hand") == 0 ||
+             strcasecmp(w, "hands") == 0 || strcasecmp(w, "land") == 0 ||
+             strcasecmp(w, "stand") == 0 || strcasecmp(w, "band") == 0 ||
+             strcasecmp(w, "sand") == 0 || strcasecmp(w, "brand") == 0 ||
+             strcasecmp(w, "grand") == 0 || strcasecmp(w, "plan") == 0 ||
+             strcasecmp(w, "man") == 0 || strcasecmp(w, "can") == 0 ||
+             strcasecmp(w, "ran") == 0 || strcasecmp(w, "than") == 0 ||
+             strcasecmp(w, "scan") == 0 || strcasecmp(w, "bank") == 0 ||
+             strcasecmp(w, "tank") == 0 || strcasecmp(w, "thank") == 0 ||
+             strcasecmp(w, "thanks") == 0 );
+}
+
+static bool isLotRoundedWord(const char* w) {
+    if (!w || w[0] == '\0') return false;
+    for (const char* p = w; *p; p++) {
+        if (tolower((unsigned char)*p) == 'o') return true;
+    }
+    if (strncasecmp(w, "wa", 2) == 0 || strncasecmp(w, "wh", 2) == 0 ||
+        strncasecmp(w, "qua", 3) == 0 || strncasecmp(w, "squa", 4) == 0) {
+        return true;
+    }
+    return false;
+}
+
+static cst_utterance* chirp_postlex(cst_utterance* u) {
+    cmu_postlex(u);
+
+    if (!s_useBritishRp) {
+        // Default cmu_us_kal behavior
+        for (cst_item* s = relation_head(utt_relation(u, "Segment")); s; s = item_next(s)) {
+            if (cst_streq(item_feat_string(s, "name"), "ah")) {
+                item_set_string(s, "name", "aa");
+            }
+        }
+        return u;
+    }
+
+    // Pass 1: British RP vowel shifts (LOT rounding, TRAP-BATH split, NURSE/LETTER non-rhotic vowels, crisp T)
+    for (cst_item* s = relation_head(utt_relation(u, "Segment")); s; s = item_next(s)) {
+        const char* name = item_feat_string(s, "name");
+        cst_item* next = item_next(s);
+        const char* nextName = next ? item_feat_string(next, "name") : "pau";
+        cst_item* next2 = next ? item_next(next) : nullptr;
+        const char* next2Name = next2 ? item_feat_string(next2, "name") : "pau";
+
+        const char* word = ffeature_string(s, "R:SylStructure.parent.parent.name");
+        int stress = ffeature_int(s, "R:SylStructure.parent.stress");
+        bool nextInSameWord = false;
+        if (next) {
+            const char* nextWord = ffeature_string(next, "R:SylStructure.parent.parent.name");
+            nextInSameWord = (word && nextWord && strcmp(word, nextWord) == 0);
+        }
+
+        // 1. Crisp British /t/ (prevent American flapping)
+        if (cst_streq(name, "dx")) {
+            item_set_string(s, "name", "t");
+            item_set_int(s, "rp_crisp_t", 1);
+            continue;
+        }
+        if (cst_streq(name, "t") && nextInSameWord && isFliteVowel(nextName)) {
+            item_set_int(s, "rp_crisp_t", 1);
+        }
+
+        // 2. LOT / CLOTH vowel rounding: American "aa" (or "ah" in what/was/want/watch/wash) -> British "ao"
+        if (cst_streq(name, "aa") && !cst_streq(nextName, "r")) {
+            if (isLotRoundedWord(word)) {
+                item_set_string(s, "name", "ao");
+                continue;
+            }
+        }
+        if (cst_streq(name, "ah") && !cst_streq(nextName, "r")) {
+            if (strcasecmp(word, "what") == 0 || strcasecmp(word, "what's") == 0 ||
+                strcasecmp(word, "was") == 0 || strcasecmp(word, "wasn't") == 0 ||
+                strcasecmp(word, "want") == 0 || strcasecmp(word, "wants") == 0 ||
+                strcasecmp(word, "watch") == 0 || strcasecmp(word, "wash") == 0) {
+                item_set_string(s, "name", "ao");
+                continue;
+            }
+        }
+
+        // 3. TRAP-BATH split: "ae" -> broad British "aa" before s/f/th or n+s/t/d/ch
+        if (cst_streq(name, "ae") && nextInSameWord) {
+            bool isBath = false;
+            if (cst_streq(nextName, "s") || cst_streq(nextName, "f") || cst_streq(nextName, "th")) {
+                bool next2SameWord = false;
+                if (next2) {
+                    const char* next2Word = ffeature_string(next2, "R:SylStructure.parent.parent.name");
+                    next2SameWord = (word && next2Word && strcmp(word, next2Word) == 0);
+                }
+                if (!next2SameWord || cst_streq(next2Name, "t") ||
+                    cst_streq(next2Name, "p") || cst_streq(next2Name, "k")) {
+                    isBath = true;
+                }
+            } else if (cst_streq(nextName, "n") && !isCommonTrapNWord(word)) {
+                if (cst_streq(next2Name, "s") || cst_streq(next2Name, "t") ||
+                    cst_streq(next2Name, "d") || cst_streq(next2Name, "ch")) {
+                    isBath = true;
+                }
+            }
+            if (isBath) {
+                item_set_string(s, "name", "aa");
+                item_set_int(s, "rp_long", 1);
+                continue;
+            }
+        }
+
+        // 4. Non-rhotic "er" / "axr" (LETTER -> schwa "ax", stressed NURSE -> long central "ah")
+        if ((cst_streq(name, "er") || cst_streq(name, "axr")) && !isFliteVowel(nextName)) {
+            if (stress > 0 && cst_streq(name, "er")) {
+                item_set_string(s, "name", "ah");
+                item_set_int(s, "rp_long", 1);
+            } else {
+                item_set_string(s, "name", "ax");
+            }
+            continue;
+        }
+    }
+
+    // Pass 2: Non-rhotic post-vocalic 'r' dropping / centering glide (preserves linking-R before vowels)
+    cst_item* s = relation_head(utt_relation(u, "Segment"));
+    while (s) {
+        cst_item* next = item_next(s);
+        const char* name = ffeature_string(s, "name");
+        if (cst_streq(name, "r")) {
+            cst_item* prev = item_prev(s);
+            const char* prevName = prev ? ffeature_string(prev, "name") : "pau";
+            const char* nextName = next ? ffeature_string(next, "name") : "pau";
+            const char* word = ffeature_string(s, "R:SylStructure.parent.parent.name");
+            const char* prevWord = prev ? ffeature_string(prev, "R:SylStructure.parent.parent.name") : "";
+            bool sameWordAsPrev = (word && prevWord && word[0] != '\0' && strcmp(word, prevWord) == 0);
+
+            if (sameWordAsPrev && isFliteVowel(prevName) && !isFliteVowel(nextName)) {
+                if (cst_streq(prevName, "aa") || cst_streq(prevName, "ao") ||
+                    cst_streq(prevName, "ah") || cst_streq(prevName, "ax")) {
+                    // START / NORTH / FORCE: lengthen preceding vowel and drop 'r'
+                    item_set_int(prev, "rp_long", 1);
+                    cst_item* ss = item_as(s, "SylStructure");
+                    if (ss) delete_item(ss);
+                    delete_item(s);
+                    s = next;
+                    continue;
+                } else {
+                    // NEAR / SQUARE / CURE: convert 'r' into subtle centering schwa glide
+                    item_set_string(s, "name", "ax");
+                    item_set_int(s, "rp_glide", 1);
+                }
+            }
+        }
+        s = next;
+    }
+
+    return u;
+}
+
+static cst_utterance* chirp_duration_model(cst_utterance* u) {
+    cart_duration(u);
+    if (!s_useBritishRp) return u;
+
+    // Rescale segment durations for clipped British RP rhythm + long non-rhotic vowels
+    float prevOrigEnd = 0.0f;
+    float accumEnd = 0.0f;
+    for (cst_item* s = relation_head(utt_relation(u, "Segment")); s; s = item_next(s)) {
+        float origEnd = ffeature_float(s, "end");
+        float dur = origEnd - prevOrigEnd;
+        if (dur < 0.005f) dur = 0.005f;
+        prevOrigEnd = origEnd;
+
+        const char* name = ffeature_string(s, "name");
+        if (item_feat_present(s, "rp_long")) {
+            dur *= 1.32f; // Long British /a:/, /o:/, /3:/
+        } else if (item_feat_present(s, "rp_glide")) {
+            dur *= 0.65f; // Subtle centering schwa glide
+        } else if (item_feat_present(s, "rp_crisp_t")) {
+            dur *= 1.10f; // Crisp aspirated British /t/
+        } else if (cst_streq(name, "ax")) {
+            dur *= 0.85f; // Brisk unstressed schwa
+        } else if (isShortCheckedVowel(name)) {
+            dur *= 0.90f; // Clipped British short checked vowels
+        }
+
+        accumEnd += dur;
+        item_set_float(s, "end", accumEnd);
+    }
+    return u;
+}
+
+static cst_utterance* chirp_f0_model(cst_utterance* u) {
+    us_f0_model(u);
+    if (!s_useBritishRp) return u;
+
+    cst_relation* targRel = utt_relation(u, "Target");
+    if (!targRel) return u;
+
+    float meanF0 = get_param_float(u->features, "int_f0_target_mean", 116.0f);
+
+    // Apply British RP stepped "High Head" + High-Falling nuclear cadence across syllables
+    bool seenFirstStressInPhrase = false;
+    for (cst_item* syl = relation_head(utt_relation(u, "Syllable")); syl; syl = item_next(syl)) {
+        cst_item* firstSeg = path_to_item(syl, "R:SylStructure.daughter.R:Segment");
+        cst_item* lastSeg = path_to_item(syl, "R:SylStructure.daughtern.R:Segment");
+        if (!firstSeg || !lastSeg) continue;
+
+        cst_item* prevSeg = item_prev(firstSeg);
+        float sylStart = prevSeg ? ffeature_float(prevSeg, "end") : 0.0f;
+        float sylEnd = ffeature_float(lastSeg, "end");
+        float sylMid = 0.5f * (sylStart + sylEnd);
+
+        bool postBreak = (!prevSeg || cst_streq(ffeature_string(prevSeg, "name"), "pau"));
+        cst_item* nextSeg = item_next(lastSeg);
+        bool preBreak = (!nextSeg || cst_streq(ffeature_string(nextSeg, "name"), "pau"));
+        if (postBreak) {
+            seenFirstStressInPhrase = false;
+        }
+
+        int stress = ffeature_int(syl, "stress");
+        const char* punc = ffeature_string(syl, "R:SylStructure.parent.R:Token.parent.punc");
+        bool isQuestion = (punc && strchr(punc, '?') != nullptr);
+
+        for (cst_item* t = relation_head(targRel); t; t = item_next(t)) {
+            float pos = ffeature_float(t, "pos");
+            if (pos < sylStart - 0.002f || pos > sylEnd + 0.002f) continue;
+
+            float f0 = ffeature_float(t, "f0");
+            bool isNearMid = (fabsf(pos - sylMid) <= 0.35f * (sylEnd - sylStart + 0.001f));
+            bool isNearEnd = (pos >= sylEnd - 0.015f);
+
+            if (stress > 0) {
+                if (!seenFirstStressInPhrase) {
+                    // British RP "High Head" step-up on the first stressed syllable of a clause
+                    f0 += meanF0 * (isNearMid ? 0.13f : 0.07f);
+                } else {
+                    // Subsequent stressed syllable: high peak followed by crisp fall
+                    f0 += meanF0 * (isNearMid ? 0.08f : -0.05f);
+                }
+            } else {
+                // Unstressed syllables sit slightly lower and flatter for dry contrast
+                f0 -= meanF0 * 0.04f;
+            }
+
+            if (preBreak && isNearEnd) {
+                if (isQuestion) {
+                    f0 = meanF0 * 1.16f;
+                } else {
+                    // Dry, deadpan K-2SO terminal drop at phrase boundary
+                    f0 = meanF0 * 0.85f;
+                }
+            }
+
+            if (f0 < 55.0f) f0 = 55.0f;
+            if (f0 > 450.0f) f0 = 450.0f;
+            item_set_float(t, "f0", f0);
+        }
+
+        if (stress > 0) {
+            seenFirstStressInPhrase = true;
+        }
+    }
+
+    return u;
+}
+
 static bool ensureFliteReady() {
     if (!s_fliteReady) {
         flite_init();
@@ -609,6 +916,9 @@ static bool ensureFliteReady() {
             Serial.println("VoiceSynth ERROR: register_cmu_us_kal failed!");
             return false;
         }
+        feat_set(s_kalVoice->features, "postlex_func", uttfunc_val(&chirp_postlex));
+        feat_set(s_kalVoice->features, "duration_model_func", uttfunc_val(&chirp_duration_model));
+        feat_set(s_kalVoice->features, "f0_model_func", uttfunc_val(&chirp_f0_model));
         s_fliteReady = true;
     }
     if (!s_combBuffer) {
@@ -644,7 +954,23 @@ bool playSynthesizedVoice(const char* rawTokenOrPhrase) {
         return false;
     }
 
-    char phrase[192];
+    const char* trimmed = rawTokenOrPhrase;
+    while (*trimmed == ' ' || *trimmed == '\t' || *trimmed == '\r' || *trimmed == '\n') {
+        trimmed++;
+    }
+    size_t rawLen = strlen(trimmed);
+    while (rawLen > 0 && (trimmed[rawLen - 1] == ' ' || trimmed[rawLen - 1] == '\t' ||
+                          trimmed[rawLen - 1] == '\r' || trimmed[rawLen - 1] == '\n')) {
+        rawLen--;
+    }
+    if (rawLen == 0) return false;
+    if (rawLen > VOICE_SYNTH_MAX_PHRASE_LEN) {
+        Serial.printf("VoiceSynth ERROR: Phrase too long (%u > %d chars)\n",
+                      (unsigned)rawLen, VOICE_SYNTH_MAX_PHRASE_LEN);
+        return false;
+    }
+
+    char phrase[96];
     normalizeVoiceToken(rawTokenOrPhrase, phrase, sizeof(phrase));
     if (phrase[0] == '\0') return false;
 
@@ -653,6 +979,7 @@ bool playSynthesizedVoice(const char* rawTokenOrPhrase) {
     // Select active pipeline (or K2SO when falling back from MP3 mode)
     const VoicePipeline& active = getActiveVoicePipeline();
     const VoicePipeline& p = active.useLegacyMp3 ? kBuiltInVoicePipelines[0] : active;
+    s_useBritishRp = p.britishRp;
 
     // Compensate Flite's internal F0 & duration for formant resampler scaling
     float formant = (p.formantScale > 0.1f) ? p.formantScale : 1.0f;
@@ -664,11 +991,26 @@ bool playSynthesizedVoice(const char* rawTokenOrPhrase) {
     flite_feat_set_float(s_kalVoice->features, "int_f0_target_stddev", fliteStd);
     flite_feat_set_float(s_kalVoice->features, "duration_stretch", fliteStretch);
 
-    Serial.printf("[%lu] VoiceSynth [%s]: \"%s\"\n", millis(), p.name, phrase);
+    Serial.printf("[%lu] VoiceSynth [%s/%s]: \"%s\"\n",
+                  millis(), p.name, s_useBritishRp ? "RP" : "US", phrase);
 
-    cst_wave* wave = flite_text_to_wave(phrase, s_kalVoice);
+    // Trap Flite out-of-memory / internal errors via cst_errjmp so cst_error()
+    // never calls exit(-1) and halts the MCU. Also call flite_synth_text()
+    // directly instead of flite_text_to_wave() to avoid duplicating the wave buffer.
+    jmp_buf fliteErrBuf;
+    cst_errjmp = &fliteErrBuf;
+    cst_utterance* u = nullptr;
+    if (setjmp(fliteErrBuf) != 0) {
+        cst_errjmp = nullptr;
+        Serial.println("VoiceSynth ERROR: Flite synthesis aborted (out of SRAM)");
+        return false;
+    }
+    u = flite_synth_text(phrase, s_kalVoice);
+    cst_errjmp = nullptr;
+
+    cst_wave* wave = u ? utt_wave(u) : nullptr;
     if (!wave || !wave->samples || wave->num_samples <= 0) {
-        if (wave) delete_wave(wave);
+        if (u) delete_utterance(u);
         return false;
     }
 
@@ -795,7 +1137,7 @@ bool playSynthesizedVoice(const char* rawTokenOrPhrase) {
         }
     }
 
-    delete_wave(wave);
+    delete_utterance(u);
 
     s->fileFinished = true;
 

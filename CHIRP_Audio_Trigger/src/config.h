@@ -49,6 +49,10 @@ using namespace libhelix;
 // Flash Maintenance (LittleFS is only used for firmware version tracking)
 // #define FORMAT_FLASH // Uncomment to force format LittleFS flash on boot
 
+// Voice Feedback Configuration
+// Uncomment to embed legacy PROGMEM MP3 voice clips (~360 KB Flash) and enable VMODE:MP3
+// #define ENABLE_LEGACY_MP3_VOICE
+
 // Audio Configuration
 #define SAMPLE_RATE 44100
 #define DEFAULT_MAX_STREAMS 3

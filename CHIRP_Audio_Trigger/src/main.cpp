@@ -416,7 +416,11 @@ extern volatile uint32_t bufferUnderrunCount;
     Serial.println("  LIST             List all banks");
     Serial.println("  CHRP:500,100,500,50"); //CHRP:StartHz,EndHz,DurationMs,Volume
     Serial.println("  PVOICE:roger roger Speak phrase with active voice pipeline");
+#ifdef ENABLE_LEGACY_MP3_VOICE
     Serial.println("  VMODE:B1         Switch voice pipeline (K2SO, B1, DROID, CUSTOM, MP3)");
+#else
+    Serial.println("  VMODE:B1         Switch voice pipeline (K2SO, B1, DROID, CUSTOM)");
+#endif
     Serial.println("  VCFG             Inspect/tune CUSTOM voice DSP pipeline");
     Serial.println("  CCRC             Clear sounds from flash ram"); //CHRP:StartHz,EndHz,DurationMs,Volume
 

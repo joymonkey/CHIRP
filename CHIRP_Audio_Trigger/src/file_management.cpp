@@ -466,85 +466,84 @@ void scanBank1() {
 // ===================================
 // Voice Feedback Helper
 // ===================================
+#ifdef ENABLE_LEGACY_MP3_VOICE
 #include "system_audio_data.h"
+#endif
 
 void playVoiceFeedback(const char* filename) {
     if (!filename || filename[0] == '\0') return;
 
-    // Synthesize via Flite + active Droid DSP pipeline unless MP3 mode is selected
-    if (!getActiveVoicePipeline().useLegacyMp3) {
-        playSynthesizedVoice(filename);
-        return;
-    }
+#ifdef ENABLE_LEGACY_MP3_VOICE
+    if (getActiveVoicePipeline().useLegacyMp3) {
+        // 1. Strip the extension ".wav" or ".mp3" from the requested filename
+        char basename[32];
+        strncpy(basename, filename, sizeof(basename) - 1);
+        basename[sizeof(basename) - 1] = '\0';
 
-    // 1. Strip the extension ".wav" or ".mp3" from the requested filename
-    char basename[32];
-    strncpy(basename, filename, sizeof(basename) - 1);
-    basename[sizeof(basename) - 1] = '\0';
-    
-    char* dot = strrchr(basename, '.');
-    if (dot) {
-        *dot = '\0';
-    }
-    
-    // 2. Lookup the array pointer and size in sysAudioFiles
-    const uint8_t* audioData = nullptr;
-    size_t audioSize = 0;
-    
-    for (int i = 0; i < numSysAudioFiles; i++) {
-        if (strcasecmp(sysAudioFiles[i].filename, basename) == 0) {
-            audioData = sysAudioFiles[i].data;
-            audioSize = sysAudioFiles[i].size;
-            break;
+        char* dot = strrchr(basename, '.');
+        if (dot) {
+            *dot = '\0';
         }
-    }
-    
-    if (!audioData || audioSize == 0) {
-        Serial.printf("[%lu] playVoiceFeedback: [NOT FOUND] '%s' in PROGMEM, falling back to synth\n", millis(), basename);
-        playSynthesizedVoice(filename);
-        return; 
-    }
 
-    Serial.printf("[%lu] playVoiceFeedback: [PLAY] '%s' (Size: %u)\n", millis(), basename, audioSize);
+        // 2. Lookup the array pointer and size in sysAudioFiles
+        const uint8_t* audioData = nullptr;
+        size_t audioSize = 0;
 
-    // Unmute
-    g_allowAudio = true;
-    delay(120); // Ramp up (Increased to prevent pop)
-    
-    // Play on Stream 0 (Dedicated System Voice Stream)
-    if (startProgmemStream(0, audioData, audioSize)) {
-        // Wait for it to finish
-        // Since we are blocking the main loop, we MUST manually pump the audio data!
-        while (streams[0].active) {
-            
-            fillStreamBuffers();
-            
-            // Handle Auto-Stop (Logic normally in main loop)
-            if (streams[0].stopRequested) {
-                stopStream(0);
-                streams[0].stopRequested = false;
+        for (int i = 0; i < numSysAudioFiles; i++) {
+            if (strcasecmp(sysAudioFiles[i].filename, basename) == 0) {
+                audioData = sysAudioFiles[i].data;
+                audioSize = sysAudioFiles[i].size;
+                break;
             }
-            // Logic to detect end of file + empty buffer
-            if (streams[0].active && streams[0].fileFinished) {
-                if (streams[0].ringBuffer->availableForRead() == 0) {
-                    stopStream(0);
+        }
+
+        if (audioData && audioSize > 0) {
+            Serial.printf("[%lu] playVoiceFeedback: [PLAY] '%s' (Size: %u)\n", millis(), basename, audioSize);
+
+            // Unmute
+            g_allowAudio = true;
+            delay(120); // Ramp up (Increased to prevent pop)
+
+            // Play on Stream 0 (Dedicated System Voice Stream)
+            if (startProgmemStream(0, audioData, audioSize)) {
+                // Wait for it to finish
+                // Since we are blocking the main loop, we MUST manually pump the audio data!
+                while (streams[0].active) {
+                    fillStreamBuffers();
+
+                    // Handle Auto-Stop (Logic normally in main loop)
+                    if (streams[0].stopRequested) {
+                        stopStream(0);
+                        streams[0].stopRequested = false;
+                    }
+                    // Logic to detect end of file + empty buffer
+                    if (streams[0].active && streams[0].fileFinished) {
+                        if (streams[0].ringBuffer->availableForRead() == 0) {
+                            stopStream(0);
+                        }
+                    }
+
+                    delay(1);
                 }
             }
-            
-            delay(1); 
+
+            // Mute again (Restore "Silence" state between files)
+            // Rev.A (Software Mute): Stop clocks to silence (no dedicated mute pin on Rev.A)
+            #if !defined(I2S_MUTE_PIN)
+            g_allowAudio = false;
+            #endif
+            // Rev.B (Hardware Mute): Clocks stay running, Mute Pin handles silence
+
+            delay(5);
+            return;
         }
+
+        Serial.printf("[%lu] playVoiceFeedback: [NOT FOUND] '%s' in PROGMEM, falling back to synth\n", millis(), basename);
     }
-    
-    // Mute again (Restore "Silence" state between files)
-    
-    // Rev.A (Software Mute): Stop clocks to silence (no dedicated mute pin on Rev.A)
-    #if !defined(I2S_MUTE_PIN)
-    g_allowAudio = false;
-    #endif
-    
-    // Rev.B (Hardware Mute): Clocks stay running, Mute Pin handles silence
-    
-    delay(5);
+#endif
+
+    // Synthesize via Flite + active Droid DSP pipeline
+    playSynthesizedVoice(filename);
 }
 
 // Play a number file (0000.wav to 0099.wav)
@@ -553,16 +552,18 @@ void playVoiceFeedback(const char* filename) {
 void playVoiceNumber(int number) {
     if (number < 0) return;
 
-    if (!getActiveVoicePipeline().useLegacyMp3 || number > 100) {
-        char numStr[16];
-        snprintf(numStr, sizeof(numStr), "%d", number);
-        playSynthesizedVoice(numStr);
+#ifdef ENABLE_LEGACY_MP3_VOICE
+    if (getActiveVoicePipeline().useLegacyMp3 && number <= 100) {
+        char numFile[16];
+        snprintf(numFile, sizeof(numFile), "%04d.wav", number);
+        playVoiceFeedback(numFile);
         return;
     }
+#endif
 
-    char numFile[16];
-    snprintf(numFile, sizeof(numFile), "%04d.wav", number);
-    playVoiceFeedback(numFile);
+    char numStr[16];
+    snprintf(numStr, sizeof(numStr), "%d", number);
+    playSynthesizedVoice(numStr);
 }
 
 void playBaudFeedback(long rate) {
