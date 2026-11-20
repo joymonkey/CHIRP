@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 #include <stddef.h>
+#include "klatt_synth.h"
 
 // ============================================================================
 // HOW TO DEFINE A NEW DROID VOICE PIPELINE:
@@ -23,9 +24,12 @@
 // ============================================================================
 
 struct VoicePipeline {
-    const char* name;           // Mode identifier (e.g. "K2SO", "B1", "DROID", "CUSTOM", "MP3")
+    const char* name;           // Mode identifier (e.g. "K2SO", "DAFT", "B1", "DROID", "CUSTOM", "MP3")
     bool useLegacyMp3;          // If true, play from sysAudioFiles[] MP3s first (fallback to synth)
     bool britishRp;             // If true, apply British RP phoneme & stepped high-falling inflection rules
+    uint8_t sourceWave;         // Klatt excitation source (0=GLOTTAL, 1=SAW, 2=PULSE, 3=SQUARE, 4=CHORD, 5=WHISPER)
+    float bwScale;              // Formant bandwidth multiplier (0.35..2.0; lower = sharper vocoder resonance)
+    bool steppedPitch;          // If true, quantize pitch into crisp musical vocoder steps (DAFT mode)
 
     // Stage 0: Flite Prosody & Formant Shift
     float pitchMeanHz;          // Target fundamental pitch F0 in Hz (e.g. 86 = deep, 175 = high)
@@ -76,7 +80,7 @@ bool applyCustomVoiceParam(const char* keyVal);
 bool resetCustomVoiceFromPreset(const char* presetName);
 
 // Normalize legacy PVOICE token or arbitrary text into speakable English phrase
-#define VOICE_SYNTH_MAX_PHRASE_LEN 64
+#define VOICE_SYNTH_MAX_PHRASE_LEN 112
 void normalizeVoiceToken(const char* rawInput, char* outPhrase, size_t outSize);
 
 // Synthesize normalized text through Flite + active VoicePipeline DSP into Stream 0

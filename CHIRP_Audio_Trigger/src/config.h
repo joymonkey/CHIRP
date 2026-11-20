@@ -51,7 +51,7 @@ using namespace libhelix;
 
 // Voice Feedback Configuration
 // Uncomment to embed legacy PROGMEM MP3 voice clips (~360 KB Flash) and enable VMODE:MP3
-// #define ENABLE_LEGACY_MP3_VOICE
+#define ENABLE_LEGACY_MP3_VOICE
 
 // Audio Configuration
 #define SAMPLE_RATE 44100

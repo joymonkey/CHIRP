@@ -58,7 +58,7 @@
  * VOL  : set volume from 0 (silent) to 99 (max)
  * CHRP : play a basic sound chirp
  * PVOICE : speak a voice token or arbitrary phrase
- * VMODE  : get/set voice pipeline (K2SO, B1, DROID, CUSTOM, MP3)
+ * VMODE  : get/set voice pipeline (DAFT, K2SO, B1, DROID, CUSTOM, MP3)
  * VCFG   : inspect or tune the CUSTOM voice DSP pipeline
  * GMAN : Get Manifest of sound banks
  * LIST : Get a list of Sound Banks and Pages
@@ -104,10 +104,10 @@
  * #WDP_ANNOUNCE [0 or 1, Default: 0]
  *   1 = every 25-30 s, send a WDP announce line on the serial control interface so a Wireless Communication
  *   Board (WCB 6.2+) lists this board on its port. Leave at 0 if the port is not connected to a WCB.
- * #VOICE_MODE [K2SO, B1, DROID, CUSTOM, MP3, Default: K2SO]
+ * #VOICE_MODE [DAFT, K2SO, B1, DROID, CUSTOM, MP3, Default: DAFT]
  *   Selects the voice synthesizer pipeline (or legacy embedded MP3 voice clips).
  * #VOICE_CUSTOM [CSV parameters]
- *   Optional custom Flite + Droid DSP parameters when using #VOICE_MODE CUSTOM.
+ *   Optional custom Klatt + Droid DSP parameters when using #VOICE_MODE CUSTOM.
  * 
  */
 
@@ -417,9 +417,9 @@ extern volatile uint32_t bufferUnderrunCount;
     Serial.println("  CHRP:500,100,500,50"); //CHRP:StartHz,EndHz,DurationMs,Volume
     Serial.println("  PVOICE:roger roger Speak phrase with active voice pipeline");
 #ifdef ENABLE_LEGACY_MP3_VOICE
-    Serial.println("  VMODE:B1         Switch voice pipeline (K2SO, B1, DROID, CUSTOM, MP3)");
+    Serial.println("  VMODE:B1         Switch voice pipeline (DAFT, K2SO, B1, DROID, CUSTOM, MP3)");
 #else
-    Serial.println("  VMODE:B1         Switch voice pipeline (K2SO, B1, DROID, CUSTOM)");
+    Serial.println("  VMODE:B1         Switch voice pipeline (DAFT, K2SO, B1, DROID, CUSTOM)");
 #endif
     Serial.println("  VCFG             Inspect/tune CUSTOM voice DSP pipeline");
     Serial.println("  CCRC             Clear sounds from flash ram"); //CHRP:StartHz,EndHz,DurationMs,Volume

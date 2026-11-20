@@ -495,9 +495,9 @@ void handleVmode(Stream &serial, char* args) {
         }
     } else {
 #ifdef ENABLE_LEGACY_MP3_VOICE
-        serial.println("ERR:PARAM - Unknown voice mode (K2SO, B1, DROID, CUSTOM, MP3)");
+        serial.println("ERR:PARAM - Unknown voice mode (DAFT, K2SO, B1, DROID, CUSTOM, MP3)");
 #else
-        serial.println("ERR:PARAM - Unknown voice mode (K2SO, B1, DROID, CUSTOM)");
+        serial.println("ERR:PARAM - Unknown voice mode (DAFT, K2SO, B1, DROID, CUSTOM)");
 #endif
     }
 }
@@ -506,7 +506,7 @@ void handleVcfg(Stream &serial, char* args) {
     while (*args == ' ') args++;
 
     if (args[0] == '\0' || strcasecmp(args, "GET") == 0) {
-        char cfgBuf[120];
+        char cfgBuf[160];
         formatCustomVoiceConfig(cfgBuf, sizeof(cfgBuf));
         sendSerialResponseF(serial, "VCFG:%s", cfgBuf);
         if (&serial == &Serial) {
@@ -519,9 +519,11 @@ void handleVcfg(Stream &serial, char* args) {
                           p.hpCutoffHz, p.lpCutoffHz, p.peakFreqHz, p.peakGainDb, p.peakQ);
             serial.printf("  rmHz=%.0f rmMix=%.2f combMs=%.1f combFb=%.2f combDamp=%.2f combMix=%.2f\n",
                           p.ringModHz, p.ringModMix, p.combDelayMs, p.combFeedback, p.combDamping, p.combMix);
-            serial.printf("  bits=%u drive=%.2f gain=%.2f uk=%d\n",
-                          p.crushBits, p.driveGain, p.outputGain, p.britishRp ? 1 : 0);
-            serial.println("  Use VCFG:<key>=<val>[,...] (e.g. VCFG:COPY=B1 or VCFG:pitch=95,rmHz=400), then VCFG:SAVE");
+            serial.printf("  bits=%u drive=%.2f gain=%.2f src=%s bw=%.2f step=%d uk=%d\n",
+                          p.crushBits, p.driveGain, p.outputGain,
+                          klattSourceTypeName(p.sourceWave), p.bwScale,
+                          p.steppedPitch ? 1 : 0, p.britishRp ? 1 : 0);
+            serial.println("  Use VCFG:<key>=<val>[,...] (e.g. VCFG:COPY=DAFT or VCFG:src=chord,bw=0.58), then VCFG:SAVE");
         }
         return;
     }
@@ -534,7 +536,7 @@ void handleVcfg(Stream &serial, char* args) {
     }
 
     if (strcasecmp(args, "RESET") == 0) {
-        resetCustomVoiceFromPreset("K2SO");
+        resetCustomVoiceFromPreset("DAFT");
         setVoiceModeByName("CUSTOM");
         writeIniFile();
         sendSerialResponse(serial, "PACK:VCFG");
